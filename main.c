@@ -23,10 +23,10 @@
 #include "timelapse.h"
 #include "startrail.h"
 
-typedef int (*pit_handler)(char *basename, char *cmd, int argc, char **argv);
+typedef int (*pit_handler)(char *basename, int argc, char **argv);
 typedef void (*pit_helper)(FILE *file, char *basename, char *cmd);
 
-static int help_handler(char *basename, char *cmd, int argc, char **argv);
+static int help_handler(char *basename, int argc, char **argv);
 static void help_helper(FILE *file, char *basename, char *cmd);
 
 static struct {
@@ -73,19 +73,19 @@ void help_helper(FILE *file, char *basename, char *cmd)
 	fprintf(file, "Usage: %s %s <command>\n\n", basename, cmd);
 }
 
-int help_handler(char *basename, char *cmd, int argc, char **argv)
+int help_handler(char *basename, int argc, char **argv)
 {
 	int rc, i;
 	char *name;
 	pit_helper helper = NULL;
 
-	if (argc < 1) {
+	if (argc < 2) {
 		rc = EINVAL;
-		help_helper(stderr, basename, cmd);
+		help_helper(stderr, basename, argv[0]);
 		goto finally;
 	}
 
-	name = argv[0];
+	name = argv[1];
 
 	for (i = 0; i < num_handlers; i++) {
 		if (!strcmp(name, handlers[i].cmd)) {
@@ -110,7 +110,7 @@ finally:
 int main(int argc, char **argv)
 {
 	int rc, i;
-	char *name, *cmd;
+	char *name;
 	pit_handler handler = NULL;
 
 	name = basename(*argv++);
@@ -122,23 +122,20 @@ int main(int argc, char **argv)
 		goto finally;
 	}
 
-	cmd = *argv++;
-	argc--;
-
 	for (i = 0; i < num_handlers; i++) {
-		if (!strcmp(cmd, handlers[i].cmd)) {
+		if (!strcmp(argv[0], handlers[i].cmd)) {
 			handler = handlers[i].handler;
 		}
 	}
 
 	if (!handler) {
 		rc = EINVAL;
-		fprintf(stderr, "Unknown command: %s\n\n", cmd);
+		fprintf(stderr, "Unknown command: %s\n\n", argv[0]);
 		help(stderr, name);
 		goto finally;
 	}
 
-	rc = (*handler)(name, cmd, argc, argv);
+	rc = (*handler)(name, argc, argv);
 
 finally:
 	return rc;

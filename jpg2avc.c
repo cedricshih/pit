@@ -36,8 +36,8 @@
 #define PIXEL_MAX 255
 
 struct jpg2avc {
-	struct avdim size;
-	struct avfrac frame_rate;
+	struct pit_dim size;
+	struct pit_frac frame_rate;
 	int quality;
 	unsigned char *frame_buf;
 	size_t frame_buf_sz;
@@ -62,7 +62,7 @@ static int rgb2yuv(const char *srcfile, unsigned int w, unsigned int h,
 		unsigned char *dst);
 ssize_t read_file(const char *filename, void *dst, size_t maxlen);
 
-struct jpg2avc *jpg2avc_new(struct avdim *size, struct avfrac *frame_rate,
+struct jpg2avc *jpg2avc_new(struct pit_dim *size, struct pit_frac *frame_rate,
 		int quality)
 {
 	int rc;
@@ -248,7 +248,7 @@ int jpg2avc_transcode(struct jpg2avc *ctx, const char *jpg, const char *rgb,
 		const char *resized, const char *avc, double a, int b)
 {
 	int rc, i;
-	struct avdim sz;
+	struct pit_dim sz;
 	double contrib;
 	size_t n;
 
@@ -290,7 +290,8 @@ int jpg2avc_transcode(struct jpg2avc *ctx, const char *jpg, const char *rgb,
 			goto finally;
 		}
 
-		if ((rc = histogram_load(ctx->histogram, rgb, sz.width * 3, sz.height))) {
+		if ((rc = histogram_load_file(ctx->histogram, rgb,
+				sz.width * 3, sz.height))) {
 			error("failed to load histogram '%s': %s", rgb,
 					strerror(rc));
 			goto finally;

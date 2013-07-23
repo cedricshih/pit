@@ -25,8 +25,8 @@ struct avcenc_session;
 typedef void (*avcenc_session_cb)(struct avcenc_session *session,
 		void *data, size_t len, void *cbarg);
 
-struct avcenc_session *avcenc_session_new(struct avdim *size,
-		struct avfrac *frame_rate, int quality);
+struct avcenc_session *avcenc_session_new(struct pit_dim *size,
+		struct pit_frac *frame_rate, int quality);
 
 void avcenc_session_free(struct avcenc_session *session);
 

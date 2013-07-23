@@ -18,7 +18,7 @@
 #ifndef PIT_H_
 #define PIT_H_
 
-int timelapse(char *basename, char *cmd, int argc, char **argv);
+int timelapse(char *basename, int argc, char **argv);
 
 void timelapse_help(FILE *file, char *basename, char *cmd);
 

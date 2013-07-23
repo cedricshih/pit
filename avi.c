@@ -32,8 +32,8 @@
 static int avi_writer_init(struct avi_writer *writer);
 static int avi_writer_finalize(struct avi_writer *writer);
 
-struct avi_writer *avi_writer_new(u_int32_t fourcc, struct avdim *size,
-		struct avfrac *fps)
+struct avi_writer *avi_writer_new(u_int32_t fourcc, struct pit_dim *size,
+		struct pit_frac *fps)
 {
 	struct avi_writer *writer;
 

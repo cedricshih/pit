@@ -62,8 +62,8 @@ void pit_x264_logger(void *priv, int level, const char *fmt, va_list ap)
         pit_vlog(lv, __func__, 0, fmt, ap);
 }
 
-struct avcenc_session *avcenc_session_new(struct avdim *size,
-		struct avfrac *frame_rate, int quality)
+struct avcenc_session *avcenc_session_new(struct pit_dim *size,
+		struct pit_frac *frame_rate, int quality)
 {
 	int rc;
 	struct avcenc_session *session = NULL;

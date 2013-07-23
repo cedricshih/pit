@@ -90,7 +90,7 @@ void histogram_free(struct histogram *histogram)
 	free(histogram);
 }
 
-int histogram_load(struct histogram *histogram, const char *filename,
+int histogram_load_file(struct histogram *histogram, const char *filename,
 		size_t stride, size_t scanline)
 {
 	int rc;
@@ -162,6 +162,30 @@ double histogram_contrib(struct histogram *histogram, size_t value)
 	}
 
 	return histogram->contribs[value];
+}
+
+size_t histogram_ratio_value(struct histogram *histogram, float ratio)
+{
+	int i;
+	double contrib;
+
+	if (ratio <= 0) {
+		return 0;
+	}
+
+	if (ratio >= 1) {
+		return histogram->size - 1;
+	}
+
+	for (i = 0; i < histogram->size; i++) {
+		contrib = histogram->contribs[i];
+
+		if (contrib >= ratio) {
+			return contrib;
+		}
+	}
+
+	return histogram->size - 1;
 }
 
 

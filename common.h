@@ -19,14 +19,29 @@
 #ifndef COMMON_H_
 #define COMMON_H_
 
-struct avdim {
+#include <sys/types.h>
+
+struct pit_dim {
 	size_t width;
 	size_t height;
 };
 
-struct avfrac {
+int pit_dim_parse(struct pit_dim *dim, const char *str);
+
+struct pit_frac {
 	int num;
 	int den;
 };
+
+struct pit_range {
+	struct {
+		float value;
+		char unit;
+	} lo, hi;
+};
+
+int pit_range_parsef(struct pit_range *range, const char *str);
+
+int pit_range_parse(struct pit_range *range, const char *str);
 
 #endif /* COMMON_H_ */

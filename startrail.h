@@ -19,7 +19,7 @@
 #ifndef STARTRAIL_H_
 #define STARTRAIL_H_
 
-int startrail(char *basename, char *cmd, int argc, char **argv);
+int startrail(char *basename, int argc, char **argv);
 
 void startrail_help(FILE *file, char *basename, char *cmd);
 

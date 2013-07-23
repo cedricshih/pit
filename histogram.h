@@ -25,11 +25,13 @@ struct histogram *histogram_new(size_t size);
 
 void histogram_free(struct histogram *histogram);
 
-int histogram_load(struct histogram *histogram, const char *file,
+int histogram_load_file(struct histogram *histogram, const char *file,
 		size_t stride, size_t scanline);
 
 size_t histogram_size(struct histogram *histogram);
 
 double histogram_contrib(struct histogram *histogram, size_t value);
+
+size_t histogram_ratio_value(struct histogram *histogram, float ratio);
 
 #endif /* HISTOGRAM_H_ */

@@ -26,7 +26,7 @@
 
 struct jpg2avc;
 
-struct jpg2avc *jpg2avc_new(struct avdim *size, struct avfrac *frame_rate,
+struct jpg2avc *jpg2avc_new(struct pit_dim *size, struct pit_frac *frame_rate,
 		int quality);
 
 void jpg2avc_free(struct jpg2avc *ctx);

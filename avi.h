@@ -26,8 +26,8 @@
 
 struct avi_writer;
 
-struct avi_writer *avi_writer_new(u_int32_t fourcc, struct avdim *size,
-		struct avfrac *fps);
+struct avi_writer *avi_writer_new(u_int32_t fourcc, struct pit_dim *size,
+		struct pit_frac *fps);
 
 void avi_writer_free(struct avi_writer *writer);
 
@@ -141,8 +141,8 @@ struct avi_writer {
 	struct riff_tree *tree;
 	char *filename;
 	u_int32_t fourcc;
-	struct avdim size;
-	struct avfrac fps;
+	struct pit_dim size;
+	struct pit_frac fps;
 	struct {
 //		struct timeval start_time;
 		size_t frames;

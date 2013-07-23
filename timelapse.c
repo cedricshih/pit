@@ -55,91 +55,12 @@ void timelapse_help(FILE *file, char *basename, char *cmd)
 			DEFAULT_FPS);
 }
 
-static int parse_rangef(const char *arg, float *lo, char *lo_unit,
-		float *hi, char *hi_unit)
-{
-	char *ptr;
-
-	*lo = strtof(arg, &ptr);
-
-	if (ptr == arg || *ptr == '\0') {
-		return EINVAL;
-	}
-
-	if (*ptr != ':') {
-		if (*(ptr + 1) != ':') {
-			return EINVAL;
-		}
-
-		*lo_unit = *ptr++;
-	} else {
-		*lo_unit = '\0';
-	}
-
-	arg = ptr + 1;
-
-	*hi = strtof(arg, &ptr);
-
-	if (ptr == arg) {
-		return EINVAL;
-	}
-
-	if (*ptr != '\0') {
-		if (*(ptr + 1) != '\0') {
-			return EINVAL;
-		}
-
-		*hi_unit = *ptr;
-	} else {
-		*hi_unit = '\0';
-	}
-
-	return 0;
-}
-
-static int parse_range(const char *arg, int *lo, int *hi)
-{
-	char *ptr;
-
-	*lo = (int) strtol(arg, &ptr, 10);
-
-	if (ptr == arg || *ptr != ':') {
-		return EINVAL;
-	}
-
-	arg = ptr + 1;
-
-	*hi = (int) strtol(arg, &ptr, 10);
-
-	if (ptr == arg || *ptr != '\0') {
-		return EINVAL;
-	}
-
-	return 0;
-}
-
-static int parse_size(const char *arg, size_t *w, size_t *h)
-{
-	char *ptr;
-
-	*w = (int) strtol(arg, &ptr, 10);
-
-	if (ptr == arg || *ptr != 'x') {
-		return EINVAL;
-	}
-
-	*h = (int) strtol(ptr + 1, &ptr, 10);
-
-	if (ptr == arg || *ptr != '\0') {
-		return EINVAL;
-	}
-
-	return 0;
-}
-
 static int jpeg_filter(const char *filename, const char *extname, void *cbarg)
 {
-	if (extname && (!strcasecmp(extname, "jpg") ||
+	const char *output = cbarg;
+
+	if (strcmp(output, filename) && extname &&
+			(!strcasecmp(extname, "jpg") ||
 			!strcasecmp(extname, "jpeg"))) {
 		return 1;
 	} else {
@@ -147,21 +68,19 @@ static int jpeg_filter(const char *filename, const char *extname, void *cbarg)
 	}
 }
 
-int timelapse(char *basename, char *cmd, int argc, char **argv)
+int timelapse(char *basename, int argc, char **argv)
 {
-	int rc, c, begin, end, i, j;
+	int rc, c, i, j;
 	enum pit_log_level log_level = PIT_WARN;
-	struct avdim size;
-	struct avfrac frame_rate;
+	struct pit_dim size;
+	struct pit_frac frame_rate;
 	int duration;
 	int quality;
-	float lo, hi;
-	char lo_unit, hi_unit;
-	int fade_in, fade_out;
+	struct pit_range stretch, range, fade;
 	struct filelist list;
 	struct file *item;
 	size_t total, limit, current;
-	char *output = DEFAULT_OUTOUT;
+	char *cmd, *output = DEFAULT_OUTOUT;
 	char fmt[256];
 	char rgb[PATH_MAX];
 	char resized[PATH_MAX];
@@ -185,11 +104,18 @@ int timelapse(char *basename, char *cmd, int argc, char **argv)
 	rgb[0] = '\0';
 	resized[0] = '\0';
 	avc[0] = '\0';
-	fade_in = fade_out = 0;
 
-	lo = PIXEL_MIN;
-	hi = PIXEL_MAX;
-	begin = end = -1;
+	memset(&stretch, '\0', sizeof(stretch));
+	stretch.lo.value = PIXEL_MIN;
+	stretch.hi.value = PIXEL_MAX;
+
+	memset(&range, '\0', sizeof(range));
+	range.lo.value = -1;
+	range.hi.value = -1;
+
+	memset(&fade, '\0', sizeof(fade));
+
+	cmd = argv[0];
 
 	while ((c = getopt(argc, argv, "vd:q:o:s:f:t:F:")) != -1) {
 		switch (c) {
@@ -212,37 +138,37 @@ int timelapse(char *basename, char *cmd, int argc, char **argv)
 			output = optarg;
 			break;
 		case 's':
-			if ((rc = parse_rangef(optarg, &lo, &lo_unit, &hi, &hi_unit))
-					|| lo < PIXEL_MIN || hi > PIXEL_MAX ||
-					(lo_unit != '\0' && lo_unit != '%') ||
-					(hi_unit != '\0' && hi_unit != '%') ||
-					(hi_unit == '%' && hi > 100)) {
+			if ((rc = pit_range_parsef(&stretch, optarg)) ||
+					stretch.lo.value < PIXEL_MIN ||
+					stretch.hi.value > PIXEL_MAX ||
+					(stretch.lo.unit != '\0' && stretch.lo.unit != '%') ||
+					(stretch.hi.unit != '\0' && stretch.hi.unit != '%') ||
+					(stretch.hi.unit == '%' && stretch.hi.value > 100)) {
 				murmur("Invalid range of contrast stretch: %s\n", optarg);
 				goto finally;
 			}
 
-			if (lo_unit == '%' && lo == 0) {
-				lo_unit = 0;
-				lo = PIXEL_MIN;
+			if (stretch.lo.unit == '%' && stretch.lo.value == 0) {
+				stretch.lo.unit = 0;
+				stretch.lo.value = PIXEL_MIN;
 			}
 
-			if (hi_unit == '%' && hi == 100) {
-				lo_unit = 0;
-				hi = PIXEL_MAX;
+			if (stretch.hi.unit == '%' && stretch.hi.value == 100) {
+				stretch.lo.unit = 0;
+				stretch.hi.value = PIXEL_MAX;
 			}
 			break;
 		case 'f':
 			frame_rate.num = strtol(optarg, NULL, 10);
 			break;
 		case 't':
-			if ((rc = parse_range(optarg, &begin, &end)) ||
-					end < begin) {
+			if ((rc = pit_range_parse(&range, optarg))) {
 				murmur("Invalid range of template: %s\n", optarg);
 				goto finally;
 			}
 			break;
 		case 'F':
-			if ((rc = parse_range(optarg, &fade_in, &fade_out))) {
+			if ((rc = pit_range_parse(&fade, optarg))) {
 				murmur("Invalid range of fade in/out: %s\n",
 						optarg);
 				goto finally;
@@ -264,7 +190,7 @@ int timelapse(char *basename, char *cmd, int argc, char **argv)
 
 	pit_set_log_level(log_level);
 
-	if ((rc = parse_size(argv[0], &size.width, &size.height))) {
+	if ((rc = pit_dim_parse(&size, argv[0]))) {
 		murmur("Invalid size: %s\n", argv[0]);
 		goto finally;
 	}
@@ -275,7 +201,8 @@ int timelapse(char *basename, char *cmd, int argc, char **argv)
 	}
 
 	if (argc == 1) {
-		if ((rc = filelist_list(&list, ".", &total, jpeg_filter, NULL))) {
+		if ((rc = filelist_list(&list, ".", &total, jpeg_filter,
+				output))) {
 			error("filelist_list: %s", strerror(rc));
 			goto finally;
 		}
@@ -283,8 +210,8 @@ int timelapse(char *basename, char *cmd, int argc, char **argv)
 		total = 0;
 
 		for (i = 1; i < argc; i++) {
-			if (begin != -1 && end != -1) {
-				for (j = begin; j <= end; j++) {
+			if (range.lo.value != -1 && range.hi.value != -1) {
+				for (j = range.lo.value; j <= range.hi.value; j++) {
 					snprintf(rgb, sizeof(rgb), argv[i], j);
 
 					if ((rc = filelist_add(&list, rgb))) {
@@ -329,25 +256,25 @@ int timelapse(char *basename, char *cmd, int argc, char **argv)
 		goto finally;
 	}
 
-	if (lo_unit == '%') {
-		if ((rc = jpg2avc_stretch_black_ratio(ctx, lo / 100))) {
+	if (stretch.lo.unit == '%') {
+		if ((rc = jpg2avc_stretch_black_ratio(ctx, stretch.lo.value / 100))) {
 			error("jpg2avc_stretch_black_ratio: %s", strerror(rc));
 			goto finally;
 		}
 	} else {
-		if ((rc = jpg2avc_stretch_black(ctx, (int) lo))) {
+		if ((rc = jpg2avc_stretch_black(ctx, (int) stretch.lo.value))) {
 			error("jpg2avc_stretch_black: %s", strerror(rc));
 			goto finally;
 		}
 	}
 
-	if (hi_unit == '%') {
-		if ((rc = jpg2avc_stretch_white_ratio(ctx, hi / 100))) {
+	if (stretch.hi.unit == '%') {
+		if ((rc = jpg2avc_stretch_white_ratio(ctx, stretch.hi.value / 100))) {
 			error("jpg2avc_stretch_white_ratio: %s", strerror(rc));
 			goto finally;
 		}
 	} else {
-		if ((rc = jpg2avc_stretch_white(ctx, (int) hi))) {
+		if ((rc = jpg2avc_stretch_white(ctx, (int) stretch.hi.value))) {
 			error("jpg2avc_stretch_white: %s", strerror(rc));
 			goto finally;
 		}
@@ -367,10 +294,10 @@ int timelapse(char *basename, char *cmd, int argc, char **argv)
 		goto finally;
 	}
 
-	if (fade_in != 0) {
-		num = fade_in * frame_rate.num / frame_rate.den;
+	if (fade.lo.value != 0) {
+		num = fade.lo.value * frame_rate.num / frame_rate.den;
 
-		if (num + fade_out * frame_rate.num / frame_rate.den < total) {
+		if (num + fade.hi.value * frame_rate.num / frame_rate.den < total) {
 			step = ((float) PIXEL_MAX) / num;
 
 			for (i = 0; i < num; i++) {
@@ -383,10 +310,10 @@ int timelapse(char *basename, char *cmd, int argc, char **argv)
 		}
 	}
 
-	if (fade_out != 0) {
-		num = fade_out * frame_rate.num / frame_rate.den;
+	if (fade.hi.value != 0) {
+		num = fade.hi.value * frame_rate.num / frame_rate.den;
 
-		if (num + fade_in * frame_rate.num / frame_rate.den < total) {
+		if (num + fade.lo.value * frame_rate.num / frame_rate.den < total) {
 			step = ((float) PIXEL_MAX) / num;
 
 			for (i = 0; i < num; i++) {
