@@ -90,6 +90,28 @@ void histogram_free(struct histogram *histogram)
 	free(histogram);
 }
 
+int histogram_load(struct histogram *histogram, unsigned char *rgb,
+		size_t stride, size_t scanline)
+{
+	size_t y, i;
+	unsigned int value;
+
+	for (y = 0; y < scanline; y++) {
+		for (i = 0; i < stride; i++) {
+			value = rgb[i];
+
+			histogram->values[value]++;
+			histogram->total++;
+			histogram->max= MAX(histogram->max, histogram->values[value]);
+			histogram->dirty = 1;
+		}
+
+		rgb += scanline;
+	}
+
+	return 0;
+}
+
 int histogram_load_file(struct histogram *histogram, const char *filename,
 		size_t stride, size_t scanline)
 {
@@ -178,10 +200,10 @@ size_t histogram_ratio_value(struct histogram *histogram, float ratio)
 	}
 
 	for (i = 0; i < histogram->size; i++) {
-		contrib = histogram->contribs[i];
+		contrib = histogram_contrib(histogram, i);
 
 		if (contrib >= ratio) {
-			return contrib;
+			return i;
 		}
 	}
 

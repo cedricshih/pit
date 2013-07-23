@@ -25,6 +25,9 @@ struct histogram *histogram_new(size_t size);
 
 void histogram_free(struct histogram *histogram);
 
+int histogram_load(struct histogram *histogram, unsigned char *rgb,
+		size_t stride, size_t scanline);
+
 int histogram_load_file(struct histogram *histogram, const char *file,
 		size_t stride, size_t scanline);
 

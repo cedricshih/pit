@@ -32,6 +32,7 @@
 #include "filelist.h"
 #include "jpg2rgb.h"
 #include "rgb2jpg.h"
+#include "histogram.h"
 
 #define murmur(fmt...) fprintf(stderr, fmt)
 
@@ -115,7 +116,7 @@ finally:
 
 int startrail(char *basename, int argc, char **argv)
 {
-	int rc, c, i, j;
+	int rc, c, i, j, black, white;
 	enum pit_log_level log_level = PIT_WARN;
 	int quality;
 	struct pit_range stretch, range;
@@ -131,6 +132,7 @@ int startrail(char *basename, int argc, char **argv)
 	struct stat st;
 	off_t fsize;
 	FILE *file;
+	struct histogram *histogram = NULL;
 
 	RB_INIT(&list);
 	quality = DEFAULT_QUALITY;
@@ -150,7 +152,7 @@ int startrail(char *basename, int argc, char **argv)
 	out = NULL;
 	file = NULL;
 
-	while ((c = getopt(argc, argv, "vq:o:t:")) != -1) {
+	while ((c = getopt(argc, argv, "vq:o:s:t:")) != -1) {
 		switch (c) {
 		case 'v':
 			log_level--;
@@ -312,7 +314,38 @@ int startrail(char *basename, int argc, char **argv)
 		}
 	}
 
-	if ((rc = rgb2jpg(output, quality, out, size.width, size.height))) {
+	black = stretch.lo.value;
+	white = stretch.hi.value;
+
+	if (stretch.lo.unit == '%' ||
+			stretch.hi.unit == '%') {
+		if (!(histogram = histogram_new(256))) {
+			rc = errno ? errno : -1;
+			error("histogram_new: %s", strerror(rc));
+			goto finally;
+		}
+
+		if ((rc = histogram_load(histogram, out, size.width * 3,
+				size.height))) {
+			error("histogram_load: %s", strerror(rc));
+			goto finally;
+		}
+
+		if (stretch.lo.unit == '%') {
+			black = histogram_ratio_value(histogram,
+					stretch.lo.value / 100);
+		}
+
+		if (stretch.hi.unit == '%') {
+			white = histogram_ratio_value(histogram,
+					stretch.hi.value / 100);
+		}
+	}
+
+	fprintf(stdout, "\nContrast stretch: %d => %d\n", black, white);
+
+	if ((rc = rgb2jpg(output, quality, black, white, 1, 0, out,
+			size.width, size.height))) {
 		error("rgb2jpg: %s", strerror(rc));
 		goto finally;
 	}
@@ -333,6 +366,9 @@ int startrail(char *basename, int argc, char **argv)
 	rc = 0;
 
 finally:
+	if (histogram) {
+		histogram_free(histogram);
+	}
 	if (file) {
 		fclose(file);
 	}

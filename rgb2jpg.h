@@ -19,6 +19,7 @@
 #ifndef RGB2JPG_H_
 #define RGB2JPG_H_
 
-int rgb2jpg(const char *dst, int quality, unsigned char *src, int w, int h);
+int rgb2jpg(const char *dst, int quality, int black, int white, double a,
+		int b, unsigned char *src, int w, int h);
 
 #endif /* RGB2JPG_H_ */
