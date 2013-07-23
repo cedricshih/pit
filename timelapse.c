@@ -80,7 +80,7 @@ int timelapse(char *basename, int argc, char **argv)
 	struct filelist list;
 	struct file *item;
 	size_t total, limit, current;
-	char *cmd, *output = DEFAULT_OUTOUT;
+	char *tmp, *cmd, *output = DEFAULT_OUTOUT;
 	char fmt[256];
 	char rgb[PATH_MAX];
 	char resized[PATH_MAX];
@@ -123,12 +123,18 @@ int timelapse(char *basename, int argc, char **argv)
 			log_level--;
 			break;
 		case 'd':
-			duration = (int) strtol(optarg, NULL, 10);
+			duration = (int) strtol(optarg, &tmp, 10);
+
+			if (*tmp != '\0') {
+				rc = EINVAL;
+				murmur("Invalid duration: %s\n", optarg);
+				goto finally;
+			}
 			break;
 		case 'q':
-			quality = (int) strtol(optarg, NULL, 10);
+			quality = (int) strtol(optarg, &tmp, 10);
 
-			if (quality < 0 || quality > 51) {
+			if (*tmp != '\0' || quality < 0 || quality > 51) {
 				rc = EINVAL;
 				murmur("Invalid quality factor: %s\n", optarg);
 				goto finally;
@@ -159,7 +165,13 @@ int timelapse(char *basename, int argc, char **argv)
 			}
 			break;
 		case 'f':
-			frame_rate.num = strtol(optarg, NULL, 10);
+			frame_rate.num = strtol(optarg, &tmp, 10);
+
+			if (*tmp != '\0') {
+				rc = EINVAL;
+				murmur("Invalid frame rate: %s\n", optarg);
+				goto finally;
+			}
 			break;
 		case 't':
 			if ((rc = pit_range_parse(&range, optarg))) {

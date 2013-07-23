@@ -126,7 +126,7 @@ int startrail(char *basename, int argc, char **argv)
 	struct filelist list;
 	struct file *item;
 	size_t total, count;
-	char *output = DEFAULT_OUTOUT;
+	char *tmp, *output = DEFAULT_OUTOUT;
 	char fmt[256];
 	char rgb[PATH_MAX];
 	struct stat st;
@@ -158,9 +158,9 @@ int startrail(char *basename, int argc, char **argv)
 			log_level--;
 			break;
 		case 'q':
-			quality = (int) strtol(optarg, NULL, 10);
+			quality = (int) strtol(optarg, &tmp, 10);
 
-			if (quality < 0 || quality > 100) {
+			if (*tmp != '\0' || quality < 0 || quality > 100) {
 				rc = EINVAL;
 				murmur("Invalid JPEG quality: %s\n", optarg);
 				goto finally;
