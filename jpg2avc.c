@@ -291,7 +291,7 @@ int jpg2avc_transcode(struct jpg2avc *ctx, const char *jpg, const char *rgb,
 		}
 
 		if ((rc = histogram_load_file(ctx->histogram, rgb,
-				sz.width * 3, sz.height))) {
+				sz.width, sz.height))) {
 			error("failed to load histogram '%s': %s", rgb,
 					strerror(rc));
 			goto finally;

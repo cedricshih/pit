@@ -36,21 +36,20 @@
 
 #define murmur(fmt...) fprintf(stderr, fmt)
 
-#define DEFAULT_OUTOUT "startrails.jpg"
 #define DEFAULT_QUALITY 98
 
 #define PIXEL_MIN 0
 #define PIXEL_MAX 255
 
-void startrail_help(FILE *file, char *basename, char *cmd)
+void stretch_help(FILE *file, char *basename, char *cmd)
 {
 	fprintf(file, "Usage: %s %s [options] [file...]\n\n"
 			"Options:\n"
-			"    -o <output>         Output JPEG file. (default: %s)\n"
+			"    -o <output>         Output JPEG file\n"
 			"    -q <quality>        Output JPEG quality from 0 to 100 (default: %d)\n"
-			"    -s <black>[:white]  Stretch contrast; black and white points could be pixel value or percentage calculated from first frame.\n"
+			"    -c <black>[:white]  Stretch contrast; black and white points could be pixel value or percentage calculated from first frame.\n"
 			"    -t <begin>:<end>    Treat file name as template, e.g. '%%08d.JPG'.\n"
-			"\n", basename, cmd, DEFAULT_OUTOUT, DEFAULT_QUALITY);
+			"\n", basename, cmd, DEFAULT_QUALITY);
 }
 
 static int jpeg_filter(const char *filename, const char *extname, void *cbarg)
@@ -113,29 +112,109 @@ finally:
 	return rc;
 }
 
-int startrail(char *basename, int argc, char **argv)
+static int stretch_file(const char *filename, struct pit_range *contrast,
+		const char *output, int quality)
 {
-	int rc, c, i, j, black, white;
+	int rc, black, white;
+	struct pit_dim size;
+	size_t num;
+	unsigned char *out = NULL;
+	struct histogram *histogram = NULL;
+	FILE *file = NULL;
+	char rgb[PATH_MAX];
+
+	snprintf(rgb, sizeof(rgb), "decompressed.rgb");
+	memset(&size, '\0', sizeof(size));
+	output = output ? output : filename;
+
+	if ((rc = jpg_read_header(filename, &size.width, &size.height))) {
+		error("jpg_read_header: %s", strerror(rc));
+		goto finally;
+	}
+
+	num = size.width * size.height * 3;
+
+	if (!(out = calloc(sizeof(*out), num))) {
+		error("malloc: %s", strerror(rc));
+		goto finally;
+	}
+
+	if ((rc = jpg2rgb(filename, rgb, 0, 255, 1, 0))) {
+		error("jpg2rgb: %s", strerror(rc));
+		goto finally;
+	}
+
+	if ((rc = load_file(out, rgb, size.width, size.height))) {
+		error("load_file: %s", strerror(rc));
+		unlink(rgb);
+		goto finally;
+	}
+
+	black = contrast->lo.value;
+	white = contrast->hi.value;
+
+	if (contrast->lo.unit == '%' || contrast->hi.unit == '%') {
+		if (!(histogram = histogram_new(256))) {
+			rc = errno ? errno : -1;
+			error("histogram_new: %s", strerror(rc));
+			goto finally;
+		}
+
+		if ((rc = histogram_load(histogram, out, size.width,
+				size.height))) {
+			error("histogram_load: %s", strerror(rc));
+			goto finally;
+		}
+
+		if (contrast->lo.unit == '%') {
+			black = histogram_ratio_value(histogram,
+					contrast->lo.value / 100);
+		}
+
+		if (contrast->hi.unit == '%') {
+			white = histogram_ratio_value(histogram,
+					contrast->hi.value / 100);
+		}
+	}
+
+	fprintf(stdout, "%d:%d => ", black, white);
+
+	if ((rc = rgb2jpg(output, quality, black, white, 1, 0, out,
+			size.width, size.height))) {
+		error("rgb2jpg: %s", strerror(rc));
+		goto finally;
+	}
+
+	rc = 0;
+
+finally:
+	unlink(rgb);
+	if (file) {
+		fclose(file);
+	}
+	if (histogram) {
+		histogram_free(histogram);
+	}
+	if (out) {
+		free(out);
+	}
+	return rc;
+}
+
+int stretch(char *basename, int argc, char **argv)
+{
+	int rc, c, i, j;
 	enum pit_log_level log_level = PIT_WARN;
 	int quality;
 	struct pit_range stretch, range;
-	struct pit_dim size, sz;
-	size_t num;
-	unsigned char *out;
 	struct filelist list;
 	struct file *item;
 	size_t total, count;
-	char *tmp, *output = DEFAULT_OUTOUT;
-	char fmt[256];
-	char rgb[PATH_MAX];
-	struct stat st;
-	off_t fsize;
-	FILE *file;
-	struct histogram *histogram = NULL;
+	char *tmp, *output = NULL;
+	char fmt[PATH_MAX];
 
 	RB_INIT(&list);
 	quality = DEFAULT_QUALITY;
-	rgb[0] = '\0';
 
 	memset(&stretch, '\0', sizeof(stretch));
 	stretch.lo.value = PIXEL_MIN;
@@ -145,13 +224,7 @@ int startrail(char *basename, int argc, char **argv)
 	range.lo.value = -1;
 	range.hi.value = -1;
 
-	memset(&size, '\0', sizeof(size));
-	memset(&sz, '\0', sizeof(sz));
-
-	out = NULL;
-	file = NULL;
-
-	while ((c = getopt(argc, argv, "vq:o:s:t:")) != -1) {
+	while ((c = getopt(argc, argv, "vq:o:c:t:")) != -1) {
 		switch (c) {
 		case 'v':
 			log_level--;
@@ -168,7 +241,7 @@ int startrail(char *basename, int argc, char **argv)
 		case 'o':
 			output = optarg;
 			break;
-		case 's':
+		case 'c':
 			if ((rc = pit_range_parsef(&stretch, optarg)) ||
 					stretch.lo.value < PIXEL_MIN ||
 					stretch.hi.value > PIXEL_MAX ||
@@ -218,14 +291,14 @@ int startrail(char *basename, int argc, char **argv)
 		for (i = 0; i < argc; i++) {
 			if (range.lo.value != -1 && range.hi.value != -1) {
 				for (j = range.lo.value; j <= range.hi.value; j++) {
-					snprintf(rgb, sizeof(rgb), argv[i], j);
+					snprintf(fmt, sizeof(fmt), argv[i], j);
 
-					if ((rc = filelist_add(&list, rgb))) {
+					if ((rc = filelist_add(&list, fmt))) {
 						if (rc == ENOENT) {
-							fprintf(stderr, "no such file: %s", rgb);
+							fprintf(stderr, "no such file: %s", fmt);
 							continue;
 						} else if (rc == EEXIST) {
-							fprintf(stderr, "exists: %s", rgb);
+							fprintf(stderr, "exists: %s", fmt);
 							continue;
 						}
 
@@ -256,7 +329,11 @@ int startrail(char *basename, int argc, char **argv)
 		goto finally;
 	}
 
-	snprintf(rgb, sizeof(rgb), "decompressed.rgb");
+	if (output && total > 1) {
+		murmur("Only one input was accepted if output specified.\n");
+		rc = EINVAL;
+		goto finally;
+	}
 
 	count = 0;
 
@@ -267,42 +344,11 @@ int startrail(char *basename, int argc, char **argv)
 		fprintf(stdout, fmt, count + 1);
 		fprintf(stdout, "/%d: %s => ", total, item->path);
 
-		if ((rc = jpg_read_header(item->path,
-				&sz.width, &sz.height))) {
-			error("jpg_read_header: %s", strerror(rc));
+		if ((rc = stretch_file(item->path, &stretch, output,
+				quality))) {
+			error("stretch_file: %s", strerror(rc));
 			goto finally;
 		}
-
-		if (!out) {
-			num = sz.width * sz.height * 3;
-
-			if (!(out = calloc(sizeof(*out), num))) {
-				error("malloc: %s", strerror(rc));
-				goto finally;
-			}
-
-			memcpy(&size, &sz, sizeof(size));
-		} else {
-			if (sz.width != size.width ||
-					sz.height != size.height) {
-				fprintf(stdout, "Size mismatch: %dx%d\n",
-						sz.width, sz.height);
-				continue;
-			}
-		}
-
-		if ((rc = jpg2rgb(item->path, rgb, 0, 255, 1, 0))) {
-			error("jpg2rgb: %s", strerror(rc));
-			goto finally;
-		}
-
-		if ((rc = load_file(out, rgb, size.width, size.height))) {
-			error("load_file: %s", strerror(rc));
-			unlink(rgb);
-			goto finally;
-		}
-
-		unlink(rgb);
 
 		fprintf(stdout, "OK\n");
 
@@ -313,67 +359,9 @@ int startrail(char *basename, int argc, char **argv)
 		}
 	}
 
-	black = stretch.lo.value;
-	white = stretch.hi.value;
-
-	if (stretch.lo.unit == '%' ||
-			stretch.hi.unit == '%') {
-		if (!(histogram = histogram_new(256))) {
-			rc = errno ? errno : -1;
-			error("histogram_new: %s", strerror(rc));
-			goto finally;
-		}
-
-		if ((rc = histogram_load(histogram, out, size.width,
-				size.height))) {
-			error("histogram_load: %s", strerror(rc));
-			goto finally;
-		}
-
-		if (stretch.lo.unit == '%') {
-			black = histogram_ratio_value(histogram,
-					stretch.lo.value / 100);
-		}
-
-		if (stretch.hi.unit == '%') {
-			white = histogram_ratio_value(histogram,
-					stretch.hi.value / 100);
-		}
-	}
-
-	fprintf(stdout, "\nContrast stretch: %d => %d\n", black, white);
-
-	if ((rc = rgb2jpg(output, quality, black, white, 1, 0, out,
-			size.width, size.height))) {
-		error("rgb2jpg: %s", strerror(rc));
-		goto finally;
-	}
-
-	if ((rc = stat(output, &st))) {
-		rc = errno ? errno : -1;
-		error("stat: %s", strerror(rc));
-		goto finally;
-	}
-
-	fprintf(stdout, "\nFinished: %s\n", output);
-	fprintf(stdout, "Resolution: %dx%d\n", size.width, size.height);
-
-	fsize = st.st_size;
-
-	fprintf(stdout, "File Size: %ld bytes / %.2fMB\n", fsize,
-			((float) fsize) / 1048576);
 	rc = 0;
 
 finally:
-	if (histogram) {
-		histogram_free(histogram);
-	}
-	if (file) {
-		fclose(file);
-	}
-	if (out) {
-		free(out);
-	}
 	filelist_clear(&list);
 	return rc;
 }

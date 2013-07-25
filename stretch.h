@@ -15,11 +15,11 @@
  * limitations under the License.
  */
 
-#ifndef TIMELAPSE_H_
-#define TIMELAPSE_H_
+#ifndef STRETCH_H_
+#define STRETCH_H_
 
-int timelapse(char *basename, int argc, char **argv);
+int stretch(char *basename, int argc, char **argv);
 
-void timelapse_help(FILE *file, char *basename, char *cmd);
+void stretch_help(FILE *file, char *basename, char *cmd);
 
-#endif /* TIMELAPSE_H_ */
+#endif /* STRETCH_H_ */

@@ -90,36 +90,47 @@ void histogram_free(struct histogram *histogram)
 	free(histogram);
 }
 
-int histogram_load(struct histogram *histogram, unsigned char *rgb,
-		size_t stride, size_t scanline)
+static inline int rgb2v(unsigned char *ptr)
+{
+	int v = (*ptr++ * 77);
+	v += (*ptr++ * 151);
+	v += (*ptr++ * 28);
+	v >>= 8;
+
+	return v;
+}
+
+int histogram_load(struct histogram *histogram, unsigned char *ptr,
+		size_t w, size_t h)
 {
 	size_t y, i;
-	unsigned int value;
+	int v;
 
-	for (y = 0; y < scanline; y++) {
-		for (i = 0; i < stride; i++) {
-			value = rgb[i];
+	for (y = 0; y < h; y++) {
+		for (i = 0; i < w; i++) {
+			v = (*ptr++ * 77);
+			v += (*ptr++ * 151);
+			v += (*ptr++ * 28);
+			v >>= 8;
 
-			histogram->values[value]++;
+			histogram->values[v]++;
 			histogram->total++;
-			histogram->max= MAX(histogram->max, histogram->values[value]);
+			histogram->max= MAX(histogram->max, histogram->values[v]);
 			histogram->dirty = 1;
 		}
-
-		rgb += scanline;
 	}
 
 	return 0;
 }
 
 int histogram_load_file(struct histogram *histogram, const char *filename,
-		size_t stride, size_t scanline)
+		size_t w, size_t h)
 {
 	int rc;
 	FILE *file = NULL;
-	unsigned char *buffer = NULL;
-	size_t y, n, i;
-	unsigned int value;
+	unsigned char *buffer = NULL, *ptr;
+	size_t s, y, n, i;
+	unsigned int v;
 
 	if (!(file = fopen(filename, "rb"))) {
 		rc = errno ? errno : -1;
@@ -127,25 +138,32 @@ int histogram_load_file(struct histogram *histogram, const char *filename,
 		goto finally;
 	}
 
-	if (!(buffer = malloc(stride))) {
+	s = w * 3;
+
+	if (!(buffer = malloc(s))) {
 		rc = errno ? errno : -1;
 		error("malloc: %s", strerror(rc));
 		goto finally;
 	}
 
-	for (y = 0; y < scanline; y++) {
-		if ((n = fread(buffer, 1, stride, file)) != stride) {
+	for (y = 0; y < h; y++) {
+		if ((n = fread(buffer, 1, s, file)) != s) {
 			rc = errno ? errno : -1;
 			error("fread: %s", strerror(rc));
 			goto finally;
 		}
 
-		for (i = 0; i < stride; i++) {
-			value = buffer[i];
+		for (i = 0; i < w; i++) {
+			ptr = buffer;
 
-			histogram->values[value]++;
+			v = (*ptr++ * 77);
+			v += (*ptr++ * 151);
+			v += (*ptr++ * 28);
+			v >>= 8;
+
+			histogram->values[v]++;
 			histogram->total++;
-			histogram->max= MAX(histogram->max, histogram->values[value]);
+			histogram->max= MAX(histogram->max, histogram->values[v]);
 			histogram->dirty = 1;
 		}
 	}
