@@ -36,23 +36,18 @@
 #define PIXEL_MAX 255
 
 struct jpg2avc {
+	char *profile;
 	struct pit_dim size;
 	struct pit_frac frame_rate;
-	int quality;
 	unsigned char *frame_buf;
 	size_t frame_buf_sz;
 	unsigned int ref_frame;
 	struct {
 		unsigned int black;
 		unsigned int white;
-		struct {
-			double black;
-			double white;
-		} ratio;
 	} stretch;
 	struct avcenc_session *session;
 	struct avi_writer *writer;
-	struct histogram *histogram;
 	unsigned int count;
 };
 
@@ -63,7 +58,7 @@ static int rgb2yuv(const char *srcfile, unsigned int w, unsigned int h,
 ssize_t read_file(const char *filename, void *dst, size_t maxlen);
 
 struct jpg2avc *jpg2avc_new(struct pit_dim *size, struct pit_frac *frame_rate,
-		int quality)
+		const char *profile)
 {
 	int rc;
 	struct jpg2avc *ctx;
@@ -71,6 +66,12 @@ struct jpg2avc *jpg2avc_new(struct pit_dim *size, struct pit_frac *frame_rate,
 	if (!(ctx = calloc(1, sizeof(*ctx)))) {
 		rc = errno ? errno : -1;
 		error("calloc: %s", strerror(rc));
+		goto finally;
+	}
+
+	if (!(ctx->profile = strdup(profile))) {
+		rc = errno ? errno : -1;
+		error("strdup: %s", strerror(rc));
 		goto finally;
 	}
 
@@ -84,13 +85,9 @@ struct jpg2avc *jpg2avc_new(struct pit_dim *size, struct pit_frac *frame_rate,
 
 	memcpy(&ctx->size, size, sizeof(ctx->size));
 	memcpy(&ctx->frame_rate, frame_rate, sizeof(ctx->frame_rate));
-	ctx->quality = quality;
 
 	ctx->stretch.black = 0;
 	ctx->stretch.white = 255;
-	ctx->stretch.ratio.black = 0;
-	ctx->stretch.ratio.white = 1;
-
 	rc = 0;
 
 finally:
@@ -108,10 +105,6 @@ void jpg2avc_free(struct jpg2avc *ctx)
 {
 	if (!ctx) {
 		return;
-	}
-
-	if (ctx->histogram) {
-		histogram_free(ctx->histogram);
 	}
 
 	if (ctx->writer) {
@@ -140,24 +133,6 @@ int jpg2avc_stretch_black(struct jpg2avc *ctx, unsigned int black)
 	}
 
 	ctx->stretch.black = black;
-	ctx->stretch.ratio.black = 0;
-
-	return 0;
-}
-
-int jpg2avc_stretch_black_ratio(struct jpg2avc *ctx, double black)
-{
-	if (!ctx) {
-		return EINVAL;
-	}
-
-	if (black < 0 || black > 1 || black >= ctx->stretch.ratio.white) {
-		return EINVAL;
-	}
-
-	ctx->stretch.black = 0;
-	ctx->stretch.ratio.black = black;
-
 	return 0;
 }
 
@@ -172,24 +147,6 @@ int jpg2avc_stretch_white(struct jpg2avc *ctx, unsigned int white)
 	}
 
 	ctx->stretch.white = white;
-	ctx->stretch.ratio.white = 1;
-
-	return 0;
-}
-
-int jpg2avc_stretch_white_ratio(struct jpg2avc *ctx, double white)
-{
-	if (!ctx) {
-		return EINVAL;
-	}
-
-	if (white < 0 || white > 1 || ctx->stretch.ratio.black >= white) {
-		return EINVAL;
-	}
-
-	ctx->stretch.white = 255;
-	ctx->stretch.ratio.white = white;
-
 	return 0;
 }
 
@@ -219,8 +176,8 @@ int jpg2avc_begin(struct jpg2avc *ctx, const char *output)
 		goto finally;
 	}
 
-	if (!(ctx->session = avcenc_session_new(&ctx->size, &ctx->frame_rate,
-			ctx->quality))) {
+	if (!(ctx->session = avcenc_session_new(ctx->profile,
+			&ctx->size, &ctx->frame_rate))) {
 		rc = errno ? errno : -1;
 		error("avcenc_session_new: %s", strerror(rc));
 		goto finally;
@@ -247,9 +204,8 @@ finally:
 int jpg2avc_transcode(struct jpg2avc *ctx, const char *jpg, const char *rgb,
 		const char *resized, const char *avc, double a, int b)
 {
-	int rc, i;
+	int rc;
 	struct pit_dim sz;
-	double contrib;
 	size_t n;
 
 	if (!ctx || !jpg || !rgb || !resized || !avc) {
@@ -276,48 +232,8 @@ int jpg2avc_transcode(struct jpg2avc *ctx, const char *jpg, const char *rgb,
 		goto finally;
 	}
 
-	if ((ctx->stretch.ratio.black > 0 && ctx->stretch.black == PIXEL_MIN) ||
-			(ctx->stretch.ratio.white < 1 && ctx->stretch.white == PIXEL_MAX)) {
-		if (!(ctx->histogram = histogram_new(256))) {
-			rc = errno ? errno : -1;
-			error("histogram_new: %s", strerror(rc));
-			goto finally;
-		}
-
-		if ((rc = jpg2rgb(jpg, rgb, PIXEL_MIN, PIXEL_MAX, 1.0, 0))) {
-			error("failed to convert '%s': %s", jpg,
-					strerror(rc));
-			goto finally;
-		}
-
-		if ((rc = histogram_load_file(ctx->histogram, rgb,
-				sz.width, sz.height))) {
-			error("failed to load histogram '%s': %s", rgb,
-					strerror(rc));
-			goto finally;
-		}
-
-		for (i = 0; i < histogram_size(ctx->histogram); i++) {
-			contrib = histogram_contrib(ctx->histogram, i);
-
-			if (ctx->stretch.ratio.black > 0 &&
-					ctx->stretch.black == PIXEL_MIN &&
-					contrib >= ctx->stretch.ratio.black) {
-				ctx->stretch.black = i;
-			}
-
-			if (ctx->stretch.ratio.white < 1 &&
-					ctx->stretch.white == PIXEL_MAX &&
-					contrib >= ctx->stretch.ratio.white) {
-				ctx->stretch.white = i;
-			}
-		}
-
-		debug("stretch: %d:%d", ctx->stretch.black, ctx->stretch.white);
-	}
-
 	if ((rc = jpg2rgb(jpg, rgb, ctx->stretch.black, ctx->stretch.white, a,
-			b))) {
+			b, NULL, NULL))) {
 		error("failed to convert '%s': %s", jpg, strerror(rc));
 		goto finally;
 	}
@@ -449,11 +365,6 @@ int jpg2avc_commit(struct jpg2avc *ctx)
 
 	avcenc_session_free(ctx->session);
 	ctx->session = NULL;
-
-	if (ctx->histogram) {
-		histogram_free(ctx->histogram);
-		ctx->histogram = NULL;
-	}
 
 	rc = 0;
 

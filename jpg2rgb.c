@@ -90,7 +90,7 @@ static unsigned char stretch(int c, int min, int max)
 }
 
 int jpg2rgb(const char *in, const char *out, int black, int white, double a,
-		int b)
+		int b, size_t *w, size_t *h)
 {
 	int rc, i;
 	struct jpeg_decompress_struct dinfo;
@@ -158,6 +158,14 @@ int jpg2rgb(const char *in, const char *out, int black, int white, double a,
 			error("fwrite: %s (%s)", strerror(rc), out);
 			goto finally;
 		}
+	}
+
+	if (w) {
+		*w = dinfo.output_width;
+	}
+
+	if (h) {
+		*h = dinfo.output_height;
 	}
 
 	jpeg_finish_decompress(&dinfo);

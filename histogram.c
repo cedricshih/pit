@@ -115,11 +115,11 @@ int histogram_load(struct histogram *histogram, unsigned char *ptr,
 
 			histogram->values[v]++;
 			histogram->total++;
-			histogram->max= MAX(histogram->max, histogram->values[v]);
-			histogram->dirty = 1;
+			histogram->max = MAX(histogram->max, histogram->values[v]);
 		}
 	}
 
+	histogram->dirty = 1;
 	return 0;
 }
 
@@ -153,9 +153,9 @@ int histogram_load_file(struct histogram *histogram, const char *filename,
 			goto finally;
 		}
 
-		for (i = 0; i < w; i++) {
-			ptr = buffer;
+		ptr = buffer;
 
+		for (i = 0; i < w; i++) {
 			v = (*ptr++ * 77);
 			v += (*ptr++ * 151);
 			v += (*ptr++ * 28);
@@ -163,11 +163,11 @@ int histogram_load_file(struct histogram *histogram, const char *filename,
 
 			histogram->values[v]++;
 			histogram->total++;
-			histogram->max= MAX(histogram->max, histogram->values[v]);
-			histogram->dirty = 1;
+			histogram->max = MAX(histogram->max, histogram->values[v]);
 		}
 	}
 
+	histogram->dirty = 1;
 	rc = 0;
 
 finally:

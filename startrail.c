@@ -291,7 +291,7 @@ int startrail(char *basename, int argc, char **argv)
 			}
 		}
 
-		if ((rc = jpg2rgb(item->path, rgb, 0, 255, 1, 0))) {
+		if ((rc = jpg2rgb(item->path, rgb, 0, 255, 1, 0, NULL, NULL))) {
 			error("jpg2rgb: %s", strerror(rc));
 			goto finally;
 		}

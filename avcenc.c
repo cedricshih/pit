@@ -62,8 +62,8 @@ void pit_x264_logger(void *priv, int level, const char *fmt, va_list ap)
         pit_vlog(lv, __func__, 0, fmt, ap);
 }
 
-struct avcenc_session *avcenc_session_new(struct pit_dim *size,
-		struct pit_frac *frame_rate, int quality)
+struct avcenc_session *avcenc_session_new(const char *profile,
+		struct pit_dim *size, struct pit_frac *frame_rate)
 {
 	int rc;
 	struct avcenc_session *session = NULL;
@@ -106,8 +106,8 @@ struct avcenc_session *avcenc_session_new(struct pit_dim *size,
 //        param->rc.i_rc_method = X264_RC_CQP;
 //        param->rc.i_qp_constant = quality;
 
-	if ((rc = x264_param_apply_profile(param, "high"))) {
-		warn("failed to apply profile: %s", strerror(rc));
+	if ((rc = x264_param_apply_profile(param, profile))) {
+		warn("failed to apply profile '%s': %s", profile, strerror(rc));
 	}
 
 	/* log redirect */

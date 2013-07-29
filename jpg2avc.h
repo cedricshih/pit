@@ -27,17 +27,13 @@
 struct jpg2avc;
 
 struct jpg2avc *jpg2avc_new(struct pit_dim *size, struct pit_frac *frame_rate,
-		int quality);
+		const char *profile);
 
 void jpg2avc_free(struct jpg2avc *ctx);
 
 int jpg2avc_stretch_black(struct jpg2avc *ctx, unsigned int black);
 
-int jpg2avc_stretch_black_ratio(struct jpg2avc *ctx, double black);
-
 int jpg2avc_stretch_white(struct jpg2avc *ctx, unsigned int white);
-
-int jpg2avc_stretch_white_ratio(struct jpg2avc *ctx, double white);
 
 int jpg2avc_begin(struct jpg2avc *ctx, const char *output);
 

@@ -65,8 +65,6 @@ static int jpeg_filter(const char *filename, const char *extname, void *cbarg)
 	}
 }
 
-#define MAX(a,b) a > b ? a : b
-
 static int load_file(unsigned char *dst, const char *filename, size_t w, size_t h)
 {
 	int rc;
@@ -96,7 +94,7 @@ static int load_file(unsigned char *dst, const char *filename, size_t w, size_t 
 		}
 
 		for (i = 0; i < stride; i++) {
-			*dst++ = MAX(buffer[i], *dst);
+			*dst++ = buffer[i];
 		}
 	}
 
@@ -139,7 +137,7 @@ static int stretch_file(const char *filename, struct pit_range *contrast,
 		goto finally;
 	}
 
-	if ((rc = jpg2rgb(filename, rgb, 0, 255, 1, 0))) {
+	if ((rc = jpg2rgb(filename, rgb, 0, 255, 1, 0, NULL, NULL))) {
 		error("jpg2rgb: %s", strerror(rc));
 		goto finally;
 	}

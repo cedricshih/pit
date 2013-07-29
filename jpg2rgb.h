@@ -22,6 +22,6 @@
 int jpg_read_header(const char *file, size_t *w, size_t *h);
 
 int jpg2rgb(const char *in, const char *out, int black, int white, double a,
-		int b);
+		int b, size_t *w, size_t *h);
 
 #endif /* JPG2RAW_H_ */

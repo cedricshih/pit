@@ -29,13 +29,15 @@
 
 #include "log.h"
 #include "filelist.h"
+#include "histogram.h"
+#include "jpg2rgb.h"
 #include "jpg2avc.h"
 
 #define murmur(fmt...) fprintf(stderr, fmt)
 
 #define DEFAULT_OUTOUT "timelapse.avi"
 #define DEFAULT_FPS 24
-#define DEFAULT_QUALITY 10
+#define DEFAULT_PROFILE "high"
 
 #define PIXEL_MIN 0
 #define PIXEL_MAX 255
@@ -44,15 +46,14 @@ void timelapse_help(FILE *file, char *basename, char *cmd)
 {
 	fprintf(file, "Usage: %s %s [options] <width>x<height> [file...]\n\n"
 			"Options:\n"
-			"    -q <quality>        Quality from 0 to 51; 0 = lossless (default: %d)\n"
 			"    -o <output>         Output video file. (default: %s)\n"
 			"    -f <fps>            Video frame rate. (default: %d)\n"
 			"    -d <duration>       Maximum video duration. (unit: second)\n"
-			"    -s <black>[:white]  Stretch contrast; black and white points could be pixel value or percentage calculated from first frame.\n"
+			"    -r <picture>        Index of reference picture. (default: 0)\n"
+			"    -s <black>[:white]  Stretch contrast; black and white points could be pixel value or percentage calculated from reference picture.\n"
 			"    -t <begin>:<end>    Treat file name as template, e.g. '%%08d.JPG'.\n"
 			"    -F <head>:<tail>    Fade in/out effect. (unit: second)\n"
-			"\n", basename, cmd, DEFAULT_QUALITY, DEFAULT_OUTOUT,
-			DEFAULT_FPS);
+			"\n", basename, cmd, DEFAULT_OUTOUT, DEFAULT_FPS);
 }
 
 static int jpeg_filter(const char *filename, const char *extname, void *cbarg)
@@ -75,7 +76,10 @@ int timelapse(char *basename, int argc, char **argv)
 	struct pit_dim size;
 	struct pit_frac frame_rate;
 	int duration;
-	int quality;
+	int ref_pic_index = 0;
+	struct pit_dim sz;
+	const char *ref_pic = NULL;
+	const char *profile;
 	struct pit_range stretch, range, fade;
 	struct filelist list;
 	struct file *item;
@@ -86,6 +90,7 @@ int timelapse(char *basename, int argc, char **argv)
 	char resized[PATH_MAX];
 	char avc[PATH_MAX];
 	int *fades = NULL;
+	struct histogram *histogram = NULL;
 	struct jpg2avc *ctx = NULL;
 	int num;
 	double step;
@@ -100,7 +105,7 @@ int timelapse(char *basename, int argc, char **argv)
 	frame_rate.num = DEFAULT_FPS;
 	frame_rate.den = 1;
 	duration = 0;
-	quality = DEFAULT_QUALITY;
+	profile = DEFAULT_PROFILE;
 	rgb[0] = '\0';
 	resized[0] = '\0';
 	avc[0] = '\0';
@@ -117,7 +122,7 @@ int timelapse(char *basename, int argc, char **argv)
 
 	cmd = argv[0];
 
-	while ((c = getopt(argc, argv, "vd:q:o:s:f:t:F:")) != -1) {
+	while ((c = getopt(argc, argv, "vd:o:s:f:t:F:")) != -1) {
 		switch (c) {
 		case 'v':
 			log_level--;
@@ -131,12 +136,12 @@ int timelapse(char *basename, int argc, char **argv)
 				goto finally;
 			}
 			break;
-		case 'q':
-			quality = (int) strtol(optarg, &tmp, 10);
+		case 'r':
+			ref_pic_index = (int) strtol(optarg, &tmp, 10);
 
-			if (*tmp != '\0' || quality < 0 || quality > 51) {
+			if (*tmp != '\0') {
 				rc = EINVAL;
-				murmur("Invalid quality factor: %s\n", optarg);
+				murmur("Invalid index of reference picture: %s\n", optarg);
 				goto finally;
 			}
 			break;
@@ -262,34 +267,73 @@ int timelapse(char *basename, int argc, char **argv)
 	snprintf(resized, sizeof(resized), "resized.rgb");
 	snprintf(avc, sizeof(avc), "encoded.264");
 
-	if (!(ctx = jpg2avc_new(&size, &frame_rate, quality))) {
+	if (!(ctx = jpg2avc_new(&size, &frame_rate, profile))) {
 		rc = errno ? errno : -1;
 		error("jpg2avc_new: %s", strerror(rc));
 		goto finally;
 	}
 
-	if (stretch.lo.unit == '%') {
-		if ((rc = jpg2avc_stretch_black_ratio(ctx, stretch.lo.value / 100))) {
-			error("jpg2avc_stretch_black_ratio: %s", strerror(rc));
-			goto finally;
+	if (stretch.lo.unit == '%' || stretch.hi.unit == '%') {
+		current = 0;
+
+		RB_FOREACH(item, filelist, &list) {
+			if (current == ref_pic_index) {
+				ref_pic = item->path;
+				break;
+			}
+
+			current++;
 		}
-	} else {
-		if ((rc = jpg2avc_stretch_black(ctx, (int) stretch.lo.value))) {
-			error("jpg2avc_stretch_black: %s", strerror(rc));
-			goto finally;
+
+		if (ref_pic) {
+			fprintf(stdout, "Stretching by '%s' =>", ref_pic);
+
+			if (!(histogram = histogram_new(256))) {
+				rc = errno ? errno : -1;
+				error("histogram_new: %s", strerror(rc));
+				goto finally;
+			}
+
+			if ((rc = jpg2rgb(ref_pic, rgb, PIXEL_MIN, PIXEL_MAX,
+					1.0, 0, &sz.width, &sz.height))) {
+				error("failed to convert '%s': %s", ref_pic,
+						strerror(rc));
+				goto finally;
+			}
+
+			if ((rc = histogram_load_file(histogram, rgb,
+					sz.width, sz.height))) {
+				error("failed to load histogram '%s': %s", rgb,
+						strerror(rc));
+				goto finally;
+			}
+
+			if (stretch.lo.unit == '%') {
+				fprintf(stdout, " %.2f%%=", stretch.lo.value);
+				stretch.lo.value = histogram_ratio_value(histogram,
+						stretch.lo.value / 100);
+				fprintf(stdout, "%d", (int) stretch.lo.value);
+			}
+
+			if (stretch.hi.unit == '%') {
+				fprintf(stdout, " %.2f%%=", stretch.hi.value);
+				stretch.hi.value = histogram_ratio_value(histogram,
+						stretch.hi.value / 100);
+				fprintf(stdout, "%d", (int) stretch.hi.value);
+			}
+
+			fprintf(stdout, "\n");
 		}
 	}
 
-	if (stretch.hi.unit == '%') {
-		if ((rc = jpg2avc_stretch_white_ratio(ctx, stretch.hi.value / 100))) {
-			error("jpg2avc_stretch_white_ratio: %s", strerror(rc));
-			goto finally;
-		}
-	} else {
-		if ((rc = jpg2avc_stretch_white(ctx, (int) stretch.hi.value))) {
-			error("jpg2avc_stretch_white: %s", strerror(rc));
-			goto finally;
-		}
+	if ((rc = jpg2avc_stretch_black(ctx, (int) stretch.lo.value))) {
+		error("jpg2avc_stretch_black: %s", strerror(rc));
+		goto finally;
+	}
+
+	if ((rc = jpg2avc_stretch_white(ctx, (int) stretch.hi.value))) {
+		error("jpg2avc_stretch_white_ratio: %s", strerror(rc));
+		goto finally;
 	}
 
 	if ((rc = jpg2avc_begin(ctx, output))) {
@@ -337,6 +381,8 @@ int timelapse(char *basename, int argc, char **argv)
 			goto finally;
 		}
 	}
+
+	fprintf(stdout, "\nPASS 1: %d frames\n\n", total);
 
 	current = 0;
 
@@ -432,6 +478,9 @@ int timelapse(char *basename, int argc, char **argv)
 	rc = 0;
 
 finally:
+	if (histogram) {
+		histogram_free(histogram);
+	}
 	if (fades) {
 		free(fades);
 	}
