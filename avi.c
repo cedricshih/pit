@@ -73,40 +73,6 @@ void avi_writer_free(struct avi_writer *writer)
 	free(writer);
 }
 
-//int avi_writer_set_video(struct avi_writer *writer,
-//		u_int32_t fourcc, const struct media *video,
-//		struct dimension *size, struct fraction *fps)
-//{
-//	int rc;
-//
-//	if (writer->stat.started) {
-//		rc = EINPROGRESS;
-//		error("already started");
-//		goto finally;
-//	}
-//
-//	if (!video || !video->ops || !video->obj) {
-//		rc = EINVAL;
-//		error("null argument(s)");
-//		goto finally;
-//	}
-//
-//	if (!video->ops->set_cb || !video->ops->unset_cb) {
-//		rc = EINVAL;
-//		error("no video callback support");
-//		goto finally;
-//	}
-//
-//	writer->fourcc = fourcc;
-//	memcpy(&writer->video, video, sizeof(writer->video));
-//	memcpy(&writer->size, size, sizeof(writer->size));
-//	memcpy(&writer->fps, fps, sizeof(writer->fps));
-//	rc = 0;
-//
-//finally:
-//	return rc;
-//}
-
 int avi_writer_open(struct avi_writer *writer, const char *filename)
 {
 	int rc;
@@ -122,12 +88,6 @@ int avi_writer_open(struct avi_writer *writer, const char *filename)
 		error("already open");
 		goto finally;
 	}
-
-//	if (gettimeofday(&writer->stat.start_time, NULL) == -1) {
-//		rc = errno ? errno : -1;
-//		error("failed to get time: %s", strerror(rc));
-//		goto finally;
-//	}
 
 	writer->stat.frames = 0;
 
@@ -213,36 +173,6 @@ int avi_writer_close(struct avi_writer *writer)
 finally:
 	return rc;
 }
-
-//int avi_writer_stat(struct avi_writer *writer,
-//		struct avi_writer_stat *stat)
-//{
-//	int rc;
-//	struct riff_stat rstat;
-//
-//	if (!writer || !stat) {
-//		rc = EINVAL;
-//		error("null argument(s)");
-//		goto finally;
-//	}
-//
-//	if ((rc = riff_stat(writer->avi, &rstat))) {
-//		error("failed to stat riff: %s", strerror(rc));
-//		goto finally;
-//	}
-//
-//	memcpy(stat, &writer->stat, sizeof(*stat));
-//
-//	if (stat->started) {
-//		stat->size = rstat.size
-//				+ riff_leaf_header_size()
-//				+ sizeof(struct avi_index) * stat->frames;
-//	}
-//	rc = 0;
-//
-//finally:
-//	return rc;
-//}
 
 int avi_writer_init(struct avi_writer *writer)
 {
@@ -404,8 +334,6 @@ finally:
 int avi_writer_finalize(struct avi_writer *writer)
 {
 	int rc;
-//	struct timeval tv;
-//	double elapse, fps;
 	union {
 		struct avi_hdr avih;
 		struct avi_stream_hdr strh;
@@ -418,31 +346,7 @@ int avi_writer_finalize(struct avi_writer *writer)
 
 	debug("finalizing: %s", writer->filename);
 
-//	if (gettimeofday(&tv, NULL) == -1) {
-//		rc = errno ? errno : -1;
-//		error("failed to get time: %s", strerror(rc));
-//		goto finally;
-//	}
-
-//	if (tv.tv_usec < writer->stat.start_time.tv_usec) {
-//		tv.tv_sec--;
-//		tv.tv_usec += 1000000;
-//	}
-
-//	elapse = tv.tv_sec - writer->stat.start_time.tv_sec
-//			+ (tv.tv_usec - writer->stat.start_time.tv_usec)
-//			/ 1000000.0;
-//	fps = writer->stat.frames / elapse;
-//
-//	error("elapsed: %f, frames: %d, fps: %f", elapse, writer->stat.frames, elapse);
-
 	memset(&data.avih, '\0', sizeof(data.avih));
-//	data.avih.us_per_frame = (1000000
-//			* (tv.tv_sec - writer->stat.start_time.tv_sec)
-//			+ (tv.tv_usec - writer->stat.start_time.tv_usec))
-//			/ writer->stat.frames;
-//	data.avih.max_bytes_per_sec = writer->size.width * writer->size.height
-//			* 3 * fps;
 	data.avih.us_per_frame = 1000000 * writer->fps.den
 			/ writer->fps.num;
 	data.avih.max_bytes_per_sec = writer->size.width * writer->size.height

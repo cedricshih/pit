@@ -33,10 +33,6 @@ void avi_writer_free(struct avi_writer *writer);
 
 struct video;
 
-//int avi_writer_set_video(struct avi_writer *writer,
-//		u_int32_t fourcc, const struct media *video,
-//		struct dimension *size, struct fraction *fps);
-
 int avi_writer_open(struct avi_writer *writer, const char *filename);
 
 int avi_writer_close(struct avi_writer *writer);
@@ -44,11 +40,6 @@ int avi_writer_close(struct avi_writer *writer);
 int avi_writer_write(struct avi_writer *writer, void *data, size_t len);
 
 size_t avi_writer_num_frames(struct avi_writer *writer);
-
-//int avi_writer_stat(struct avi_writer *writer,
-//		struct avi_writer_stat *stat);
-
-//
 
 enum {
 	AVIF_HASINDEX = 0x00000010,
@@ -144,7 +135,6 @@ struct avi_writer {
 	struct pit_dim size;
 	struct pit_frac fps;
 	struct {
-//		struct timeval start_time;
 		size_t frames;
 		size_t size;
 	} stat;
@@ -154,14 +144,5 @@ struct avi_writer {
 	struct riff *strh;
 	struct riff *movi;
 };
-
-//static int avi_writer_open(struct avi_writer *writer);
-//
-//static int avi_writer_close(struct avi_writer *writer);
-
-//struct zcbuffer;
-//
-//static void avi_writer_video_cb(void *obj, enum media_event event,
-//		const struct media_data *data, void *cbarg);
 
 #endif /* AVI_H_ */
