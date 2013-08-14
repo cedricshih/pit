@@ -144,6 +144,118 @@ void filelist_clear(struct filelist *list)
 	}
 }
 
+int fileque_list(struct fileque *list, const char *path, size_t *total,
+		filelist_filter_cb filter_cb, void *cbarg)
+{
+	int rc;
+	DIR *dir = NULL;
+	struct dirent *ent;
+	char buffer[PATH_MAX], *c;
+	size_t count = 0;
+
+	if (!(dir = opendir(path))) {
+		rc = errno ? errno : -1;
+		error("opendir: %s", strerror(rc));
+		goto finally;
+	}
+
+	/* print all the files and directories within directory */
+	while ((ent = readdir(dir)) != NULL ) {
+		if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) {
+			continue;
+		}
+
+		if (filter_cb) {
+			c = strrchr(ent->d_name, '.');
+
+			if (!((*filter_cb)(ent->d_name, c ? c + 1 : c, cbarg))) {
+				continue;
+			}
+		}
+
+		snprintf(buffer, sizeof(buffer), "%s/%s", path, ent->d_name);
+
+		if ((rc = fileque_add(list, buffer))) {
+			if (rc == EISDIR) {
+				continue;
+			}
+
+			error("fileque_add: %s\n", strerror(rc));
+			goto finally;
+		}
+
+		count++;
+	}
+
+	if (total) {
+		*total = count;
+	}
+
+	rc = 0;
+
+finally:
+	if (dir) {
+		closedir(dir);
+	}
+	return rc;
+}
+
+int fileque_add(struct fileque *list, const char *path)
+{
+	int rc;
+	struct file *item = NULL;
+	struct stat st;
+
+	if ((rc = stat(path, &st))) {
+		rc = errno ? errno : rc;
+		goto finally;
+	}
+
+	if (S_ISDIR(st.st_mode)) {
+		rc = EISDIR;
+		goto finally;
+	}
+
+	if (!(item = calloc(1, sizeof(*item)))) {
+		rc = errno ? errno : -1;
+		goto finally;
+	}
+
+	if (!(item->path = strdup(path))) {
+		rc = errno ? errno : -1;
+		goto finally;
+	}
+
+	TAILQ_INSERT_TAIL(list, item, next);
+	rc = 0;
+
+finally:
+	if (rc) {
+		if (item) {
+			if (item->path) {
+				free(item->path);
+			}
+			free(item);
+		}
+	}
+	return rc;
+}
+
+void fileque_clear(struct fileque *list)
+{
+	struct file *item;
+
+	while ((item = TAILQ_FIRST(list))) {
+		TAILQ_REMOVE(list, item, next);
+
+		if (item->path) {
+			free(item->path);
+		}
+
+		free(item);
+	}
+}
+
 int file_cmp(struct file *a, struct file *b)
 {
 	return strcmp(a->path, b->path);

@@ -19,11 +19,13 @@
 #ifndef FILELIST_H_
 #define FILELIST_H_
 
+#include <sys/queue.h>
 #include "sys/tree.h"
 
 struct file {
 	char *path;
 	RB_ENTRY(file) entry;
+	TAILQ_ENTRY(file) next;
 };
 
 RB_HEAD(filelist, file);
@@ -41,5 +43,14 @@ void filelist_clear(struct filelist *list);
 int file_cmp(struct file *a, struct file *b);
 
 RB_PROTOTYPE(filelist, file, entry, file_cmp);
+
+TAILQ_HEAD(fileque, file);
+
+int fileque_list(struct fileque *list, const char *dir, size_t *total,
+		filelist_filter_cb filter_cb, void *cbarg);
+
+int fileque_add(struct fileque *list, const char *path);
+
+void fileque_clear(struct fileque *list);
 
 #endif /* FILELIST_H_ */

@@ -23,6 +23,7 @@
 #include "timelapse.h"
 #include "startrail.h"
 #include "stretch.h"
+#include "stack.h"
 
 typedef int (*pit_handler)(char *basename, int argc, char **argv);
 typedef void (*pit_helper)(FILE *file, char *basename, char *cmd);
@@ -40,6 +41,7 @@ static struct {
 		{ "stretch", "strech contrast", stretch, stretch_help },
 		{ "time", "create timelapse video", timelapse, timelapse_help },
 		{ "star", "create star trail photograph", startrail, startrail_help },
+		{ "stack", "create HDR image", stack, stack_help },
 };
 static int num_handlers = sizeof(handlers) / sizeof(handlers[0]);
 
