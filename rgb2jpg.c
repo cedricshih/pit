@@ -28,6 +28,22 @@ static unsigned char stretch(int c, int min, int max)
 	return clamp((c - min) * 255 / (max - min));
 }
 
+static void reverse(unsigned char *stride, size_t w)
+{
+	size_t i;
+	unsigned char r, g, b;
+
+	for (i = 0; i < w; i++) {
+		r = stride[0];
+		g = stride[1];
+		b = stride[2];
+
+		*stride++ = b;
+		*stride++ = g;
+		*stride++ = r;
+	}
+}
+
 int rgb2jpg(const char *dst, int quality, int black, int white, double a,
 		int b, unsigned char *src, int w, int h)
 {
@@ -82,6 +98,8 @@ int rgb2jpg(const char *dst, int quality, int black, int white, double a,
 				}
 			}
 		}
+
+		reverse(cbuffer[0], w);
 
 		jpeg_write_scanlines(&cinfo, cbuffer, 1);
 		src += cstride;

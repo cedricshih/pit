@@ -31,21 +31,43 @@
 #include "common.h"
 #include "filelist.h"
 #include "jpg2rgb.h"
+#include "rgb2jpg.h"
 #include "rgbe.h"
 
-#define DEFAULT_OUTPUT "stack.hdr"
-#define DEFAULT_EV 3
+#define DEFAULT_OUTPUT "stack_%05d.hdr"
+#define TEMPFILE_RGB "tempfile.rgb"
+#define TEMPFILE_RGBF "tempfile.xyz"
 
 #define murmur(fmt...) fprintf(stderr, fmt)
+
+struct ev {
+	float stop;
+	TAILQ_ENTRY(ev) next;
+};
+
+TAILQ_HEAD(evlist, ev);
+
+struct layer {
+	float stop;
+	const char *path;
+	RB_ENTRY(layer) entry;
+};
+
+static int layer_cmp(struct layer *a, struct layer *b);
+
+RB_HEAD(stack, layer);
+RB_PROTOTYPE(stack, layer, entry, layer_cmp);
+
+static void stack_clear(struct stack *stack);
 
 void stack_help(FILE *file, char *basename, char *cmd)
 {
 	fprintf(file, "Usage: %s %s [options] [file...]\n\n"
 			"Options:\n"
-			"    -o <output>         Output file (default: %s)\n"
-			"    -e <stop>           Bracket EV (default: %d)\n"
-			"    -t <begin>:<end>    Treat file name as template, e.g. '%%08d.JPG'.\n"
-			"\n", basename, cmd, DEFAULT_EV, DEFAULT_OUTPUT);
+			"    -o <output>         Output filename template (default: %s)\n"
+			"    -e <stop>           Bracket EV (specify for multiple times)\n"
+			"    -t <begin>:<end>    Treat file name as template, e.g. '%%08d.JPG'\n"
+			"\n", basename, cmd, DEFAULT_OUTPUT);
 }
 
 static int jpeg_filter(const char *filename, const char *extname, void *cbarg)
@@ -156,11 +178,11 @@ static inline void nnadd(float *dst, float *x, float *y, size_t len)
 	}
 }
 
-static int load_file(float *dst, const char *filename,
+static int load_file(float *dst, const char *src,
 		size_t w, size_t h)
 {
 	int rc;
-	FILE *file = NULL;
+	FILE *fdst = NULL, *fsrc = NULL;
 	size_t i, y, stride, len;
 	unsigned char *buffer = NULL;
 
@@ -172,14 +194,14 @@ static int load_file(float *dst, const char *filename,
 		goto finally;
 	}
 
-	if (!(file = fopen(filename, "rb"))) {
+	if (!(fsrc = fopen(src, "rb"))) {
 		rc = errno ? errno : -1;
 		error("fopen: %s", strerror(rc));
 		goto finally;
 	}
 
 	for (y = 0; y < h; y++) {
-		if ((len = fread(buffer, 1, stride, file)) != stride) {
+		if ((len = fread(buffer, 1, stride, fsrc)) != stride) {
 			rc = errno ? errno : -1;
 			error("fread: %s", strerror(rc));
 			goto finally;
@@ -196,8 +218,11 @@ finally:
 	if (buffer) {
 		free(buffer);
 	}
-	if (file) {
-		fclose(file);
+	if (fsrc) {
+		fclose(fsrc);
+	}
+	if (fdst) {
+		fclose(fdst);
 	}
 	return rc;
 }
@@ -251,8 +276,6 @@ static int stack_file(float *bg, const char *filename, size_t w, size_t h,
 	}
 
 	factor = ev_factor(ev);
-
-	fprintf(stdout, "EV=%f/%f => ", ev, factor);
 
 	for (y = 0; y < h; y++) {
 		if ((len = fread(bytes, 1, stride, file)) != stride) {
@@ -339,14 +362,20 @@ int stack(char *basename, int argc, char **argv)
 	struct pit_range range;
 	struct fileque list;
 	struct file *item;
-	size_t total, count, w, h, n;
-	char *output = DEFAULT_OUTPUT;
+	struct evlist evlist;
+	struct ev *ev;
+	struct stack stack;
+	struct layer *layer;
+	size_t total, count, w, h, n, evnum;
+	char *ptr, *output = DEFAULT_OUTPUT;
 	char fmt[PATH_MAX];
-	float *buffer;
-	int ev, step = DEFAULT_EV;
+	float *buffer, evmin, evstop;
 
 	buffer = NULL;
 	TAILQ_INIT(&list);
+	TAILQ_INIT(&evlist);
+	RB_INIT(&stack);
+	evnum = 0;
 
 	memset(&range, '\0', sizeof(range));
 	range.lo.value = -1;
@@ -361,7 +390,28 @@ int stack(char *basename, int argc, char **argv)
 			output = optarg;
 			break;
 		case 'e':
-			step = strtol(optarg, NULL, 10);
+			ptr = optarg;
+
+			while (ptr) {
+				evstop = strtof(ptr, &ptr);
+
+				if (!(ev = calloc(1, sizeof(*ev)))) {
+					rc = errno ? errno : -1;
+					error("calloc: %s", strerror(rc));
+					goto finally;
+				}
+
+				ev->stop = evstop;
+
+				TAILQ_INSERT_TAIL(&evlist, ev, next);
+				evnum++;
+
+				if (*ptr == ',') {
+					ptr++;
+				} else {
+					ptr = NULL;
+				}
+			}
 			break;
 		case 't':
 			if ((rc = pit_range_parse(&range, optarg))) {
@@ -430,81 +480,219 @@ int stack(char *basename, int argc, char **argv)
 		goto finally;
 	}
 
-	count = 0;
-	ev = 0;
-
-	TAILQ_FOREACH(item, &list, next) {
-		snprintf(fmt, sizeof(fmt), "%d", total);
-		snprintf(fmt, sizeof(fmt), "%%0%dd", strlen(fmt));
-
-		fprintf(stdout, fmt, count + 1);
-		fprintf(stdout, "/%d: %s => ", total, item->path);
-
-		if ((rc = jpg2rgb(item->path, output, 0, 255, 1, 0, &w, &h))) {
-			error("jpg2rgb: %s", strerror(rc));
-			goto finally;
-		} else {
-			n = w * h * 3;
-		}
-
-		if (!buffer) {
-			if (!(buffer = calloc(n, sizeof(*buffer)))) {
-				rc = errno ? errno : -1;
-				error("calloc: %s", strerror(rc));
-				goto finally;
-			}
-
-//			nset(buffer, n, 0);
-
-			if ((rc = load_file(buffer, output, w, h))) {
-				error("stack_file: %s", strerror(rc));
-				goto finally;
-			}
-		} else {
-
-		if ((rc = stack_file(buffer, output, w, h, ev, 0.7, 0.8))) {
-			error("stack_file: %s", strerror(rc));
-			goto finally;
-		}
-		}
-
-		fprintf(stdout, "OK\n");
-
-		count++;
-
-		if (count >= total) {
-			break;
-		}
-
-//		switch (ev) {
-//		case 0:
-//			ev = -3;
-//			break;
-//		case -3:
-//			ev = 3;
-//			break;
-//		case 3:
-//			ev = 0;
-//			break;
-//		}
-
-		ev += step;
+	if (TAILQ_EMPTY(&evlist)) {
+		murmur("No EV stop specified.\n");
+		rc = EINVAL;
+		goto finally;
 	}
 
-	nmultiply(buffer, buffer, n, pow(2.0, 3));
-//	nclamp(buffer, buffer, n, 0, 1.0);
-
-	if ((rc = write_file(buffer, output, w, h))) {
-		error("write_file: %s", strerror(rc));
+	if (evnum == 1) {
+		murmur("Only one EV stop specified.\n");
+		rc = EINVAL;
 		goto finally;
+	}
+
+	if (total % evnum != 0) {
+		murmur("Number of files could not be divided by number of EV stops.\n");
+		rc = EINVAL;
+		goto finally;
+	}
+
+	evmin = 1e20F;
+	evstop = 1e20F;
+
+	TAILQ_FOREACH(ev, &evlist, next) {
+		if (abs(ev->stop) < evstop) {
+			evstop = abs(ev->stop);
+		}
+
+		if (ev->stop < evmin) {
+			evmin = ev->stop;
+		}
+	}
+
+	fprintf(stdout, "Center EV: %f\n", evstop);
+
+	count = 0;
+	ev = TAILQ_FIRST(&evlist);
+
+	TAILQ_FOREACH(item, &list, next) {
+		if (!(layer = calloc(1, sizeof(*layer)))) {
+			rc = errno ? errno : -1;
+			error("calloc: %s", strerror(rc));
+			goto finally;
+		}
+
+		layer->stop = ev->stop;
+		layer->path = item->path;
+		RB_INSERT(stack, &stack, layer);
+
+		if (!(ev = TAILQ_NEXT(ev, next))) {
+			snprintf(fmt, sizeof(fmt), "%d", total);
+			snprintf(fmt, sizeof(fmt), "%%0%dd", strlen(fmt));
+
+			fprintf(stdout, fmt, count + 1);
+			fprintf(stdout, "/%d: ", total / evnum);
+
+			RB_FOREACH(layer, stack, &stack) {
+				fprintf(stdout, "%s => ", layer->path);
+
+				if ((rc = jpg2rgb(layer->path, TEMPFILE_RGB, 0, 255, 1, 0, &w, &h))) {
+					error("jpg2rgb: %s", strerror(rc));
+					goto finally;
+				} else {
+					n = w * h * 3;
+				}
+
+				if (layer == RB_MIN(stack, &stack)) {
+					if (!buffer) {
+						if (!(buffer = calloc(n, sizeof(*buffer)))) {
+							rc = errno ? errno : -1;
+							error("calloc: %s", strerror(rc));
+							goto finally;
+						}
+					}
+
+					if ((rc = load_file(buffer, TEMPFILE_RGB, w, h))) {
+						error("load_file: %s", strerror(rc));
+						goto finally;
+					}
+				} else {
+					if ((rc = stack_file(buffer, TEMPFILE_RGB, w, h,
+							layer->stop - evmin, 0.7, 0.8))) {
+						error("stack_file: %s", strerror(rc));
+						goto finally;
+					}
+				}
+			}
+
+			nmultiply(buffer, buffer, n, pow(2.0, evstop));
+
+			count++;
+			snprintf(fmt, sizeof(fmt), output, count);
+
+			fprintf(stdout, "%s => ", fmt);
+
+			if ((rc = write_file(buffer, fmt, w, h))) {
+				error("write_file: %s", strerror(rc));
+				goto finally;
+			}
+
+			fprintf(stdout, "OK\n");
+
+			ev = TAILQ_FIRST(&evlist);
+			stack_clear(&stack);
+		}
+//
+//		fprintf(stdout, "OK\n");
+//
+//		count++;
+//
+//		if (count >= total) {
+//			break;
+//		}
+//
+//		snprintf(fmt, sizeof(fmt), "%d", total);
+//		snprintf(fmt, sizeof(fmt), "%%0%dd", strlen(fmt));
+//
+//		fprintf(stdout, fmt, count + 1);
+//		fprintf(stdout, "/%d: %s => ", total, item->path);
+//
+//		if ((rc = jpg2rgb(item->path, TEMPFILE, 0, 255, 1, 0, &w, &h))) {
+//			error("jpg2rgb: %s", strerror(rc));
+//			goto finally;
+//		} else {
+//			n = w * h * 3;
+//		}
+//
+//		if (ev == TAILQ_FIRST(&evlist)) {
+//			if (!buffer) {
+//				if (!(buffer = calloc(n, sizeof(*buffer)))) {
+//					rc = errno ? errno : -1;
+//					error("calloc: %s", strerror(rc));
+//					goto finally;
+//				}
+//			}
+//
+//			if ((rc = load_file(buffer, TEMPFILE, w, h))) {
+//				error("load_file: %s", strerror(rc));
+//				goto finally;
+//			}
+//		} else {
+//			fprintf(stdout, "EV=%f/%f => ", ev->stop, ev->stop - evmin);
+//
+//			if ((rc = stack_file(buffer, TEMPFILE, w, h,
+//					ev->stop - evmin, 0.7, 0.8))) {
+//				error("stack_file: %s", strerror(rc));
+//				goto finally;
+//			}
+//		}
+//
+//		ev = TAILQ_NEXT(ev, next);
+//
+//		if (!ev) {
+//			nmultiply(buffer, buffer, n, pow(2.0, evstop));
+//
+//			outnum++;
+//			snprintf(fmt, sizeof(fmt), output, outnum - evmin);
+//
+//			fprintf(stdout, "%s => ", fmt);
+//
+//			if ((rc = write_file(buffer, fmt, w, h))) {
+//				error("write_file: %s", strerror(rc));
+//				goto finally;
+//			}
+//
+//			ev = TAILQ_FIRST(&evlist);
+//		}
+//
+//		fprintf(stdout, "OK\n");
+//
+//		count++;
+//
+//		if (count >= total) {
+//			break;
+//		}
 	}
 
 	rc = 0;
 
 finally:
+	unlink(TEMPFILE_RGB);
+	unlink(TEMPFILE_RGBF);
+	while ((ev = TAILQ_FIRST(&evlist))) {
+		TAILQ_REMOVE(&evlist, ev, next);
+		free(ev);
+	}
 	if (buffer) {
 		free(buffer);
 	}
 	fileque_clear(&list);
 	return rc;
 }
+
+
+int layer_cmp(struct layer *a, struct layer *b)
+{
+	float result = a->stop - b->stop;
+
+	if (result < 0) {
+		return -1;
+	} else if (result > 0) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
+void stack_clear(struct stack *stack)
+{
+	struct layer *layer;
+
+	while ((layer = RB_MIN(stack, stack))) {
+		RB_REMOVE(stack, stack, layer);
+		free(layer);
+	}
+}
+
+RB_GENERATE(stack, layer, entry, layer_cmp);
