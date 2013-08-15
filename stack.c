@@ -59,6 +59,8 @@ RB_HEAD(stack, layer);
 RB_PROTOTYPE(stack, layer, entry, layer_cmp);
 
 static void stack_clear(struct stack *stack);
+static int stack_flush(struct stack *stack, float evcenter, float evmin,
+		const char *output);
 
 void stack_help(FILE *file, char *basename, char *cmd)
 {
@@ -178,17 +180,53 @@ static inline void nnadd(float *dst, float *x, float *y, size_t len)
 	}
 }
 
-static int load_file(float *dst, const char *src,
-		size_t w, size_t h)
+static inline int freadn(void *dst, FILE *src, size_t len)
+{
+	int rc;
+	size_t n, rem = len;
+	unsigned char *ptr = dst;
+
+	clearerr(src);
+
+	while (rem > 0) {
+		if ((n = fread(ptr, 1, rem, src)) != rem) {
+			if ((rc = ferror(src))) {
+				goto finally;
+			}
+
+			if (!n) {
+				rc = errno ? errno : -1;
+				goto finally;
+			}
+		}
+
+		rem -= n;
+		ptr += n;
+	}
+
+	rc = 0;
+
+finally:
+	return rc;
+}
+
+static int load_file(const char *dst, const char *src, size_t w, size_t h)
 {
 	int rc;
 	FILE *fdst = NULL, *fsrc = NULL;
 	size_t i, y, stride, len;
-	unsigned char *buffer = NULL;
+	float *bdst = NULL;
+	unsigned char *bsrc = NULL;
 
 	stride = w * 3;
 
-	if (!(buffer = malloc(stride))) {
+	if (!(bdst = malloc(stride * sizeof(*bdst)))) {
+		rc = errno ? errno : -1;
+		error("malloc: %s", strerror(rc));
+		goto finally;
+	}
+
+	if (!(bsrc = malloc(stride))) {
 		rc = errno ? errno : -1;
 		error("malloc: %s", strerror(rc));
 		goto finally;
@@ -200,23 +238,37 @@ static int load_file(float *dst, const char *src,
 		goto finally;
 	}
 
+	if (!(fdst = fopen(dst, "wb+"))) {
+		rc = errno ? errno : -1;
+		error("fopen: %s", strerror(rc));
+		goto finally;
+	}
+
 	for (y = 0; y < h; y++) {
-		if ((len = fread(buffer, 1, stride, fsrc)) != stride) {
-			rc = errno ? errno : -1;
+		if ((rc = freadn(bsrc, fsrc, stride))) {
 			error("fread: %s", strerror(rc));
 			goto finally;
 		}
 
 		for (i = 0; i < stride; i++) {
-			*dst++ += buffer[i] / 255.0;
+			bdst[i] = bsrc[i] / 255.0;
+		}
+
+		if ((len = fwrite(bdst, sizeof(*bdst), stride, fdst)) != stride) {
+			rc = errno ? errno : -1;
+			error("fread: %s", strerror(rc));
+			goto finally;
 		}
 	}
 
 	rc = 0;
 
 finally:
-	if (buffer) {
-		free(buffer);
+	if (bsrc) {
+		free(bsrc);
+	}
+	if (bdst) {
+		free(bdst);
 	}
 	if (fsrc) {
 		fclose(fsrc);
@@ -238,14 +290,92 @@ static void stack_line(float *bg, float *fg, float *mat, size_t len,
 	nnadd(bg, bg, fg, len);
 }
 
-static int stack_file(float *bg, const char *filename, size_t w, size_t h,
+#if 0
+static int read_line(float *dst, const char *src, size_t y, size_t stride)
+{
+	int rc;
+	FILE *fsrc = NULL;
+	size_t len;
+
+	if (!(fsrc = fopen(src, "rb"))) {
+		rc = errno ? errno : -1;
+		error("fopen: %s", strerror(rc));
+		goto finally;
+	}
+
+	if (y != 0) {
+		len = y * stride * sizeof(*dst);
+
+		fprintf(stdout, "reading line: %d @ %d\n", y, len);
+
+		if (fseek(fsrc, len, SEEK_SET) < 0) {
+			rc = errno ? errno : -1;
+			error("fseek: %s (%s)", strerror(rc), src);
+			goto finally;
+		}
+	}
+
+	if ((rc = freadn(dst, fsrc, stride * sizeof(*dst)))) {
+		error("fread: %s", strerror(rc));
+		goto finally;
+	}
+
+	rc = 0;
+
+finally:
+	if (fsrc) {
+		fclose(fsrc);
+	}
+	return rc;
+}
+
+static int write_line(const char *dst, float *src, size_t y, size_t stride)
+{
+	int rc;
+	FILE *fdst = NULL;
+	size_t len;
+
+	if (!(fdst = fopen(dst, "wb"))) {
+		rc = errno ? errno : -1;
+		error("fopen: %s", strerror(rc));
+		goto finally;
+	}
+
+//	fprintf(stdout, "writing line: %d\n", y);
+
+	if (y != 0) {
+		if (fseek(fdst, y * stride * sizeof(*dst), SEEK_SET) < 0) {
+			rc = errno ? errno : -1;
+			error("fseek: %s", strerror(rc));
+			goto finally;
+		}
+	}
+
+	if ((len = fwrite(src, sizeof(*src), stride, fdst)) != stride) {
+		rc = errno ? errno : -1;
+		error("fwrite: %s", strerror(rc));
+		goto finally;
+	}
+
+	rc = 0;
+
+finally:
+	if (fdst) {
+		fflush(fdst);
+		fclose(fdst);
+	}
+	return rc;
+}
+#endif
+
+static int stack_file(const char *dst, const char *src, size_t w, size_t h,
 		float ev, float lo, float hi)
 {
 	int rc;
-	FILE *file = NULL;
-	size_t i, y, stride, len;
+	FILE *fdst = NULL, *fsrc = NULL;
+	size_t i, y, stride, len, off;
 	unsigned char *bytes = NULL;
-	float factor, *fg, *mat, *dst;
+	float factor, *bg = NULL, *fg = NULL, *mat = NULL;
 
 	stride = w * 3;
 
@@ -255,7 +385,13 @@ static int stack_file(float *bg, const char *filename, size_t w, size_t h,
 		goto finally;
 	}
 
-	len = stride * sizeof(*fg);
+	len = stride * sizeof(*bg);
+
+	if (!(bg = malloc(len))) {
+		rc = errno ? errno : -1;
+		error("malloc: %s", strerror(rc));
+		goto finally;
+	}
 
 	if (!(fg = malloc(len))) {
 		rc = errno ? errno : -1;
@@ -269,7 +405,13 @@ static int stack_file(float *bg, const char *filename, size_t w, size_t h,
 		goto finally;
 	}
 
-	if (!(file = fopen(filename, "rb"))) {
+	if (!(fsrc = fopen(src, "rb"))) {
+		rc = errno ? errno : -1;
+		error("fopen: %s", strerror(rc));
+		goto finally;
+	}
+
+	if (!(fdst = fopen(dst, "r+"))) {
 		rc = errno ? errno : -1;
 		error("fopen: %s", strerror(rc));
 		goto finally;
@@ -278,31 +420,44 @@ static int stack_file(float *bg, const char *filename, size_t w, size_t h,
 	factor = ev_factor(ev);
 
 	for (y = 0; y < h; y++) {
-		if ((len = fread(bytes, 1, stride, file)) != stride) {
-			rc = errno ? errno : -1;
+		if ((rc = freadn(bytes, fsrc, stride))) {
 			error("fread: %s", strerror(rc));
 			goto finally;
 		}
 
-//		for (i = 0; i < stride; i++) {
-//			*bg++ += bytes[i] / 255.0;
-//		}
-
-		dst = fg;
-
 		for (i = 0; i < stride; i++) {
-			*dst++ = bytes[i] / 255.0;
+			fg[i] = bytes[i] / 255.0;
 		}
+
+		off = y * stride * sizeof(*bg);
+		fseek(fdst, off, 0);
+
+		if ((rc = freadn(bg, fdst, stride * sizeof(*bg)))) {
+			error("fread: %s", strerror(rc));
+			goto finally;
+		}
+
+//		if ((rc = read_line(bg, dst, y, stride))) {
+//			error("read_line: %s", strerror(rc));
+//			goto finally;
+//		}
 
 		stack_line(bg, fg, mat, stride, factor, lo, hi);
 
-//		dst = bg;
-//
-//		for (i = 0; i < stride; i++) {
-//			*dst++ *= pow(2.0, center);
-//		}
+		fseek(fdst, off, 0);
 
-		bg += stride;
+		if ((len = fwrite(bg, sizeof(*bg), stride, fdst)) != stride) {
+			rc = errno ? errno : -1;
+			error("fwrite: %s", strerror(rc));
+			goto finally;
+		}
+
+		fflush(fdst);
+
+//		if ((rc = write_line(dst, bg, y, stride))) {
+//			error("write_line: %s", strerror(rc));
+//			goto finally;
+//		}
 	}
 
 	rc = 0;
@@ -311,46 +466,78 @@ finally:
 	if (mat) {
 		free(mat);
 	}
+	if (bg) {
+		free(bg);
+	}
 	if (fg) {
 		free(fg);
 	}
 	if (bytes) {
 		free(bytes);
 	}
-	if (file) {
-		fclose(file);
+	if (fdst) {
+		fclose(fdst);
+	}
+	if (fsrc) {
+		fclose(fsrc);
 	}
 	return rc;
 }
 
-static int write_file(float *src, const char *filename, size_t w, size_t h)
+static int write_file(const char *dst, const char *src, size_t w, size_t h, float factor)
 {
-	int rc;
-	FILE *file = NULL;
+	int rc, y;
+	FILE *fdst = NULL, *fsrc = NULL;
+	float *buffer = NULL;
+	size_t stride = w * 3;
 
-	if (!(file = fopen(filename, "w+"))) {
+	if (!(fdst = fopen(dst, "wb+"))) {
 		rc = errno ? errno : -1;
 		error("fopen: %s", strerror(rc));
 		goto finally;
 	}
 
-	if (RGBE_WriteHeader(file, w, h, NULL)) {
+	if (!(fsrc = fopen(src, "rb"))) {
+		rc = errno ? errno : -1;
+		error("fopen: %s", strerror(rc));
+		goto finally;
+	}
+
+	if (!(buffer = malloc(stride * sizeof(*buffer)))) {
+		rc = errno ? errno : -1;
+		error("malloc: %s", strerror(rc));
+		goto finally;
+	}
+
+	if (RGBE_WriteHeader(fdst, w, h, NULL)) {
 		rc = errno ? errno : -1;
 		error("RGBE_WriteHeader: %s", strerror(rc));
 		goto finally;
 	}
 
-	if (RGBE_WritePixels(file, src, w * h)) {
-		rc = errno ? errno : -1;
-		error("RGBE_WritePixels: %s", strerror(rc));
-		goto finally;
+	for (y = 0; y < h; y++) {
+		if ((rc = freadn(buffer, fsrc, stride * sizeof(*buffer)))) {
+			error("fread: %s (y=%d)", strerror(rc), y);
+			goto finally;
+		}
+
+		nmultiply(buffer, buffer, stride, factor);
+
+		if (RGBE_WritePixels(fdst, buffer, w)) {
+			rc = errno ? errno : -1;
+			error("RGBE_WritePixels: %s", strerror(rc));
+			goto finally;
+		}
 	}
 
 	rc = 0;
 
 finally:
-	if (file) {
-		fclose(file);
+	if (fdst) {
+		fclose(fdst);
+	}
+	if (fsrc) {
+		fclose(fsrc);
 	}
 	return rc;
 }
@@ -366,7 +553,7 @@ int stack(char *basename, int argc, char **argv)
 	struct ev *ev;
 	struct stack stack;
 	struct layer *layer;
-	size_t total, count, w, h, n, evnum;
+	size_t total, count, evnum;
 	char *ptr, *output = DEFAULT_OUTPUT;
 	char fmt[PATH_MAX];
 	float *buffer, evmin, evstop;
@@ -528,131 +715,21 @@ int stack(char *basename, int argc, char **argv)
 		RB_INSERT(stack, &stack, layer);
 
 		if (!(ev = TAILQ_NEXT(ev, next))) {
-			snprintf(fmt, sizeof(fmt), "%d", total);
+			snprintf(fmt, sizeof(fmt), "%d", total / evnum);
 			snprintf(fmt, sizeof(fmt), "%%0%dd", strlen(fmt));
 
 			fprintf(stdout, fmt, count + 1);
 			fprintf(stdout, "/%d: ", total / evnum);
 
-			RB_FOREACH(layer, stack, &stack) {
-				fprintf(stdout, "%s => ", layer->path);
-
-				if ((rc = jpg2rgb(layer->path, TEMPFILE_RGB, 0, 255, 1, 0, &w, &h))) {
-					error("jpg2rgb: %s", strerror(rc));
-					goto finally;
-				} else {
-					n = w * h * 3;
-				}
-
-				if (layer == RB_MIN(stack, &stack)) {
-					if (!buffer) {
-						if (!(buffer = calloc(n, sizeof(*buffer)))) {
-							rc = errno ? errno : -1;
-							error("calloc: %s", strerror(rc));
-							goto finally;
-						}
-					}
-
-					if ((rc = load_file(buffer, TEMPFILE_RGB, w, h))) {
-						error("load_file: %s", strerror(rc));
-						goto finally;
-					}
-				} else {
-					if ((rc = stack_file(buffer, TEMPFILE_RGB, w, h,
-							layer->stop - evmin, 0.7, 0.8))) {
-						error("stack_file: %s", strerror(rc));
-						goto finally;
-					}
-				}
-			}
-
-			nmultiply(buffer, buffer, n, pow(2.0, evstop));
-
 			count++;
 			snprintf(fmt, sizeof(fmt), output, count);
 
-			fprintf(stdout, "%s => ", fmt);
-
-			if ((rc = write_file(buffer, fmt, w, h))) {
-				error("write_file: %s", strerror(rc));
-				goto finally;
-			}
+			stack_flush(&stack, evstop, evmin, fmt);
 
 			fprintf(stdout, "OK\n");
 
 			ev = TAILQ_FIRST(&evlist);
-			stack_clear(&stack);
 		}
-//
-//		fprintf(stdout, "OK\n");
-//
-//		count++;
-//
-//		if (count >= total) {
-//			break;
-//		}
-//
-//		snprintf(fmt, sizeof(fmt), "%d", total);
-//		snprintf(fmt, sizeof(fmt), "%%0%dd", strlen(fmt));
-//
-//		fprintf(stdout, fmt, count + 1);
-//		fprintf(stdout, "/%d: %s => ", total, item->path);
-//
-//		if ((rc = jpg2rgb(item->path, TEMPFILE, 0, 255, 1, 0, &w, &h))) {
-//			error("jpg2rgb: %s", strerror(rc));
-//			goto finally;
-//		} else {
-//			n = w * h * 3;
-//		}
-//
-//		if (ev == TAILQ_FIRST(&evlist)) {
-//			if (!buffer) {
-//				if (!(buffer = calloc(n, sizeof(*buffer)))) {
-//					rc = errno ? errno : -1;
-//					error("calloc: %s", strerror(rc));
-//					goto finally;
-//				}
-//			}
-//
-//			if ((rc = load_file(buffer, TEMPFILE, w, h))) {
-//				error("load_file: %s", strerror(rc));
-//				goto finally;
-//			}
-//		} else {
-//			fprintf(stdout, "EV=%f/%f => ", ev->stop, ev->stop - evmin);
-//
-//			if ((rc = stack_file(buffer, TEMPFILE, w, h,
-//					ev->stop - evmin, 0.7, 0.8))) {
-//				error("stack_file: %s", strerror(rc));
-//				goto finally;
-//			}
-//		}
-//
-//		ev = TAILQ_NEXT(ev, next);
-//
-//		if (!ev) {
-//			nmultiply(buffer, buffer, n, pow(2.0, evstop));
-//
-//			outnum++;
-//			snprintf(fmt, sizeof(fmt), output, outnum - evmin);
-//
-//			fprintf(stdout, "%s => ", fmt);
-//
-//			if ((rc = write_file(buffer, fmt, w, h))) {
-//				error("write_file: %s", strerror(rc));
-//				goto finally;
-//			}
-//
-//			ev = TAILQ_FIRST(&evlist);
-//		}
-//
-//		fprintf(stdout, "OK\n");
-//
-//		count++;
-//
-//		if (count >= total) {
-//			break;
-//		}
 	}
 
 	rc = 0;
@@ -671,6 +748,49 @@ finally:
 	return rc;
 }
 
+int stack_flush(struct stack *stack, float evcenter, float evmin,
+		const char *output)
+{
+	int rc;
+	struct layer *layer;
+	size_t w, h;
+
+	RB_FOREACH(layer, stack, stack) {
+		fprintf(stdout, "%s => ", layer->path);
+
+		if ((rc = jpg2rgb(layer->path, TEMPFILE_RGB, 0, 255, 1, 0, &w, &h))) {
+			error("jpg2rgb: %s", strerror(rc));
+			goto finally;
+		}
+
+		if (layer == RB_MIN(stack, stack)) {
+			if ((rc = load_file(TEMPFILE_RGBF, TEMPFILE_RGB, w, h))) {
+				error("load_file: %s", strerror(rc));
+				goto finally;
+			}
+		} else {
+			if ((rc = stack_file(TEMPFILE_RGBF, TEMPFILE_RGB, w, h,
+					layer->stop - evmin, 0.7, 0.8))) {
+				error("stack_file: %s", strerror(rc));
+				goto finally;
+			}
+		}
+	}
+
+	fprintf(stdout, "%s => ", output);
+
+	if ((rc = write_file(output, TEMPFILE_RGBF, w, h,
+			pow(2.0, evcenter - evmin)))) {
+		error("write_file: %s", strerror(rc));
+		goto finally;
+	}
+
+	stack_clear(stack);
+	rc = 0;
+
+finally:
+	return rc;
+}
 
 int layer_cmp(struct layer *a, struct layer *b)
 {
